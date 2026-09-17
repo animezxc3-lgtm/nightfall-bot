@@ -75,7 +75,6 @@ for event in longpoll.listen():
                     event_id=event_id,
                     user_id=event_user_id,
                     peer_id=event_peer_id,
-                    event_data=json.dumps({'type':'show_snackbar','text':'Готово'}, ensure_ascii=False)
                 )
             except Exception as answer_error:
                 print(f'⚠️ Не удалось подтвердить callback VK: {answer_error}')
