@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = os.getenv('VK_TOKEN', 'vk1.a.sy6eeHjV-u6Dwr1mg2dI5kVaTkzWUUuHnb-kSQfQwHf5VkrzXFE4J2LaDhLNTwW28DR9Drvag94URDsX7Edgiv-PWFxGbhsKyGeuBfcF-mSF3Mh7xD3r1nWgOVtBBvs42rSOoYU1AR3EtoEcx3USI5ohRDuyzD_TCMh2F3OhEpH-HEnrmx_Mj2Y2l2FDbRAY2mEP90gMrfRRAQXUTWTQwg')
+TOKEN = os.getenv('VK_TOKEN')
 GROUP_ID = int(os.getenv('VK_GROUP_ID', '240896963'))
 CREATOR_ID = int(os.getenv('CREATOR_ID', '750158017'))
 

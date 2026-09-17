@@ -49,7 +49,6 @@ def _chat_title(vk, peer_id):
 
 
 def _header_line(title):
-    """🌙 NightFall 1 🌙 или 🌙 NightFall 🌙"""
     title = (title or '').strip()
     if not title:
         return '🌙 NightFall 🌙'
@@ -63,22 +62,18 @@ def build_pin_text(vk, peer_id):
     title = _chat_title(vk, peer_id)
     header = _header_line(title)
 
-    # собираем роли: глобальные (5,6) + локальные (1-4) для этой беседы
     roles = {1: [], 2: [], 3: [], 4: [], 5: [], 6: []}
     seen = set()
 
-    # глобальные
     for uid, level in get_all_global_roles():
         if level in (5, 6) and uid not in seen:
             roles[level].append(uid)
             seen.add(uid)
 
-    # создатель всегда показывается как Лелуш ви Британия
     if CREATOR_ID not in seen:
         roles[6].append(CREATOR_ID)
         seen.add(CREATOR_ID)
 
-    # локальные
     for uid, level in get_admins_for_chat(peer_id):
         if level in (1, 2, 3, 4) and uid not in seen:
             roles[level].append(uid)
@@ -95,7 +90,6 @@ def build_pin_text(vk, peer_id):
     lines.append(DIVIDER)
     lines.append('')
 
-    # Лелуш (6)
     lines.append('➤ 👑 Лелуш ви Британия:')
     if roles[6]:
         for uid in roles[6]:
@@ -106,7 +100,6 @@ def build_pin_text(vk, peer_id):
     lines.append(DIVIDER)
     lines.append('')
 
-    # Вершитель (5)
     lines.append('➤ ⚖ Вершитель правосудия:')
     if roles[5]:
         for uid in roles[5]:
@@ -117,7 +110,6 @@ def build_pin_text(vk, peer_id):
     lines.append(DIVIDER)
     lines.append('')
 
-    # Локальные роли 4, 3, 2, 1
     for level, emoji, label in [(4, '📱', 'Главный администратор'),
                                 (3, '⚙', 'Заместитель главного администратора'),
                                 (2, '⚒', 'Администраторы'),
@@ -143,6 +135,7 @@ def build_pin_text(vk, peer_id):
 
 
 def _send_new_pin(vk, peer_id, text):
+    """Отправляет новое сообщение закрепа и сохраняет message_id и cmid."""
     try:
         result = vk.messages.send(
             peer_id=peer_id,
@@ -154,43 +147,69 @@ def _send_new_pin(vk, peer_id, text):
     except Exception as e:
         print(f'⚠️ Не удалось отправить закреп в {peer_id}: {e}')
         return None
+
+    message_id = result if isinstance(result, int) else None
     cmid = None
-    try:
-        if isinstance(result, int):
-            info = vk.messages.getById(message_ids=result)
+
+    if message_id:
+        try:
+            info = vk.messages.getById(message_ids=message_id)
             items = info.get('items') or []
             if items:
                 cmid = items[0].get('conversation_message_id')
-    except Exception as e:
-        print(f'⚠️ Не удалось получить cmid закрепа в {peer_id}: {e}')
-    if cmid is not None:
-        set_chat_pin(peer_id, cmid)
-    return cmid
+        except Exception as e:
+            print(f'⚠️ getById не сработал для {peer_id}: {e}')
+
+    set_chat_pin(peer_id, conversation_message_id=cmid, message_id=message_id)
+    return message_id
 
 
 def update_pin_in_chat(vk, peer_id, notify=False):
-    """Обновляет закреп в одной беседе."""
+    """Обновляет закреп в одной беседе. Возвращает (ok, status)."""
     text = build_pin_text(vk, peer_id)
-    pin = get_chat_pin(peer_id)
+    pin = get_chat_pin(peer_id)  # (cmid, message_id, updated_at) или None
 
-    if pin and pin[0]:
+    if pin and (pin[0] or pin[1]):
         cmid = pin[0]
-        try:
-            vk.messages.edit(
-                peer_id=peer_id,
-                conversation_message_id=cmid,
-                message=text,
-                disable_mentions=True,
-                dont_parse_links=1,
-            )
+        message_id = pin[1]
+
+        edited = False
+
+        if cmid:
+            try:
+                vk.messages.edit(
+                    peer_id=peer_id,
+                    conversation_message_id=cmid,
+                    message=text,
+                    disable_mentions=True,
+                    dont_parse_links=1,
+                )
+                edited = True
+            except Exception as e:
+                print(f'⚠️ edit по cmid не сработал в {peer_id}: {e}')
+
+        if not edited and message_id:
+            try:
+                vk.messages.edit(
+                    peer_id=peer_id,
+                    message_id=message_id,
+                    message=text,
+                    disable_mentions=True,
+                    dont_parse_links=1,
+                )
+                edited = True
+            except Exception as e:
+                print(f'⚠️ edit по message_id не сработал в {peer_id}: {e}')
+
+        if edited:
             return True, 'updated'
-        except Exception as e:
-            print(f'⚠️ Закреп в {peer_id} не редактируется ({e}), создаю новый.')
-            _send_new_pin(vk, peer_id, text)
-            return True, 'recreated'
-    else:
+
+        print(f'⚠️ Закреп в {peer_id} не редактируется, создаю новый.')
         _send_new_pin(vk, peer_id, text)
-        return True, 'created'
+        return True, 'recreated'
+
+    _send_new_pin(vk, peer_id, text)
+    return True, 'created'
 
 
 def update_all_pins(vk):

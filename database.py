@@ -207,6 +207,7 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS chat_pins (
             peer_id INTEGER PRIMARY KEY,
             conversation_message_id INTEGER,
+            message_id INTEGER,
             updated_at TEXT NOT NULL
         );
 
@@ -223,6 +224,9 @@ def migrate_database():
         scols = {row[1] for row in c.execute("PRAGMA table_info(chat_settings)").fetchall()}
         if "duel_enabled" not in scols:
             c.execute("ALTER TABLE chat_settings ADD COLUMN duel_enabled INTEGER DEFAULT 1")
+        pcols = {row[1] for row in c.execute("PRAGMA table_info(chat_pins)").fetchall()}
+        if "message_id" not in pcols:
+            c.execute("ALTER TABLE chat_pins ADD COLUMN message_id INTEGER")
 
 
 def create_user(user_id, name):
@@ -1039,23 +1043,25 @@ def get_application_cooldown(user_id):
 # ============ ЗАКРЕПЫ ============
 
 def get_chat_pin(peer_id):
+    """Возвращает (conversation_message_id, message_id, updated_at) или None."""
     with db_cursor() as (_, c):
         r = c.execute(
-            "SELECT conversation_message_id, updated_at FROM chat_pins WHERE peer_id=?",
+            "SELECT conversation_message_id, message_id, updated_at FROM chat_pins WHERE peer_id=?",
             (peer_id,)
         ).fetchone()
         return r
 
 
-def set_chat_pin(peer_id, conversation_message_id):
+def set_chat_pin(peer_id, conversation_message_id=None, message_id=None):
     with db_cursor(True) as (_, c):
         c.execute("""
-            INSERT INTO chat_pins(peer_id, conversation_message_id, updated_at)
-            VALUES(?,?,CURRENT_TIMESTAMP)
+            INSERT INTO chat_pins(peer_id, conversation_message_id, message_id, updated_at)
+            VALUES(?,?,?,CURRENT_TIMESTAMP)
             ON CONFLICT(peer_id) DO UPDATE SET
-                conversation_message_id=excluded.conversation_message_id,
+                conversation_message_id=COALESCE(excluded.conversation_message_id, chat_pins.conversation_message_id),
+                message_id=COALESCE(excluded.message_id, chat_pins.message_id),
                 updated_at=CURRENT_TIMESTAMP
-        """, (peer_id, conversation_message_id))
+        """, (peer_id, conversation_message_id, message_id))
 
 
 # ============ РАБОТА ============
@@ -1068,25 +1074,3 @@ def set_salary(user_id, amount):
 def increment_work_days(user_id):
     with db_cursor(True) as (_, c):
         c.execute("UPDATE users SET work_days=work_days+1 WHERE user_id=?", (user_id,))
-def update_application_state_if_sent(user_id, new_state):
-    """
-    Атомарно меняет состояние заявки:
-    sent -> accepted / declined.
-
-    Возвращает True, если состояние действительно изменилось.
-    Возвращает False, если заявка уже была обработана
-    или находится не в состоянии sent.
-    """
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    with db_cursor(True) as (_, c):
-        cur = c.execute(
-            """
-            UPDATE applications
-            SET state = ?, updated_at = ?
-            WHERE user_id = ? AND state = 'sent'
-            """,
-            (new_state, now, user_id)
-        )
-
-        return cur.rowcount == 1

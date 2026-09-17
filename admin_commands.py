@@ -1,5 +1,5 @@
 import re
-from config import CREATOR_ID, GROUP_ID
+from config import CREATOR_ID, GROUP_ID, PROFILE_WELCOME_ALBUM_ID
 from response_context import get_user_id, get_exclude_actor
 from database import *
 
@@ -40,6 +40,15 @@ def _refresh_pin(vk, peer_id):
         update_pin_in_chat(vk, peer_id)
     except Exception as e:
         print(f'⚠️ Не удалось обновить закреп {peer_id}: {e}')
+
+
+def _refresh_all_pins(vk):
+    """Обновляет закрепы во всех беседах (для глобальных ролей)."""
+    try:
+        from pin_manager import update_all_pins
+        update_all_pins(vk)
+    except Exception as e:
+        print(f'⚠️ Не удалось обновить все закрепы: {e}')
 
 
 def extract_user_id(text):
@@ -158,7 +167,6 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                     return True
                 set_global_role(target, 0)
                 _send(vk, peer_id, f'✅ Глобальная роль снята: {_user_link(vk, target)}.')
-                # Обновляем закрепы во ВСЕХ беседах, потому что роль глобальная
                 _refresh_all_pins(vk)
                 return True
             set_admin_level(peer_id, target, 0, 'Участник')
@@ -216,7 +224,6 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             set_global_role(target, level)
             role = ROLE_NAMES[level]
             _send(vk, peer_id, f'✅ {role} назначен: {_user_link(vk, target)}')
-            # Глобальные роли — обновляем закрепы во всех беседах
             _refresh_all_pins(vk)
             return True
 
@@ -245,7 +252,6 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             return True
         set_admin_level(target_peer, target, level, ROLE_NAMES[level])
         _send(vk, peer_id, f'✅ Выдан уровень {level} — {ROLE_NAMES[level]} в беседе {chat_number}.')
-        # Локальная роль — обновляем закреп только этой беседы
         _refresh_pin(vk, target_peer)
         return True
 
@@ -283,7 +289,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if not target or not photo_id.isdigit():
             _send(vk, peer_id, '❌ Укажи пользователя и числовой ID фотографии.')
             return True
-        album_id = 314239613
+        album_id = PROFILE_WELCOME_ALBUM_ID
         try:
             photos = vk.photos.get(owner_id=-GROUP_ID, album_id=album_id, count=1000)['items']
             photo = next((x for x in photos if str(x['id']) == photo_id), None)
@@ -303,7 +309,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if m:
             photo_id, text = m.group(1), m.group(2).strip()
             try:
-                photos = vk.photos.get(owner_id=-GROUP_ID, album_id=314239613, count=1000)['items']
+                photos = vk.photos.get(owner_id=-GROUP_ID, album_id=PROFILE_WELCOME_ALBUM_ID, count=1000)['items']
                 if any(str(x['id']) == photo_id for x in photos):
                     photo = f'photo-{GROUP_ID}_{photo_id}'
                     rest = text
@@ -413,12 +419,3 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         return True
 
     return True
-
-
-def _refresh_all_pins(vk):
-    """Обновляет закрепы во всех беседах (для глобальных ролей)."""
-    try:
-        from pin_manager import update_all_pins
-        update_all_pins(vk)
-    except Exception as e:
-        print(f'⚠️ Не удалось обновить все закрепы: {e}')
