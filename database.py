@@ -69,7 +69,8 @@ def migrate_database():
             job_last_work TEXT,
             family_surname TEXT DEFAULT '',
             profile_image TEXT DEFAULT '',
-            custom_role TEXT DEFAULT ''
+            custom_role TEXT DEFAULT '',
+            last_message_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS messages_stats (
@@ -94,7 +95,8 @@ def migrate_database():
             cleanup_enabled INTEGER DEFAULT 0,
             casino_enabled INTEGER DEFAULT 1,
             mute_enabled INTEGER DEFAULT 0,
-            duel_enabled INTEGER DEFAULT 1
+            duel_enabled INTEGER DEFAULT 1,
+            broadcast_enabled INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS relationships (
@@ -157,6 +159,7 @@ def migrate_database():
             peer_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
             first_join_at TEXT NOT NULL,
+            invited_by INTEGER,
             PRIMARY KEY(peer_id, user_id)
         );
 
@@ -211,22 +214,39 @@ def migrate_database():
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS kick_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            peer_id INTEGER,
+            kicked_by INTEGER,
+            created_at TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_warning_events_user_date
             ON warning_events(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_kick_events_user_date
+            ON kick_events(user_id, created_at);
         """)
 
         cols = {row[1] for row in c.execute("PRAGMA table_info(users)").fetchall()}
         if "admin_warnings" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN admin_warnings INTEGER DEFAULT 0")
+        if "last_message_at" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN last_message_at TEXT")
         wcols = {row[1] for row in c.execute("PRAGMA table_info(warning_events)").fetchall()}
         if "peer_id" not in wcols:
             c.execute("ALTER TABLE warning_events ADD COLUMN peer_id INTEGER")
         scols = {row[1] for row in c.execute("PRAGMA table_info(chat_settings)").fetchall()}
         if "duel_enabled" not in scols:
             c.execute("ALTER TABLE chat_settings ADD COLUMN duel_enabled INTEGER DEFAULT 1")
+        if "broadcast_enabled" not in scols:
+            c.execute("ALTER TABLE chat_settings ADD COLUMN broadcast_enabled INTEGER DEFAULT 0")
         pcols = {row[1] for row in c.execute("PRAGMA table_info(chat_pins)").fetchall()}
         if "message_id" not in pcols:
             c.execute("ALTER TABLE chat_pins ADD COLUMN message_id INTEGER")
+        mcols = {row[1] for row in c.execute("PRAGMA table_info(chat_members)").fetchall()}
+        if "invited_by" not in mcols:
+            c.execute("ALTER TABLE chat_members ADD COLUMN invited_by INTEGER")
 
 
 def create_user(user_id, name):
@@ -253,7 +273,7 @@ def get_user(user_id):
             SELECT user_id,name,nickname,soul_gems,coins,job,salary,work_days,
                    housing,car,phone,role,rights,warnings,join_date,messages_total,
                    banned,job_level,job_exp,job_last_work,family_surname,
-                   profile_image,custom_role,admin_warnings
+                   profile_image,custom_role,admin_warnings,last_message_at
             FROM users WHERE user_id=?
         """, (user_id,))
         r = c.fetchone()
@@ -295,14 +315,42 @@ def get_admins_for_chat(peer_id):
         return c.fetchall()
 
 
-def record_chat_join(peer_id, user_id, only_if_missing=True):
-    now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+def record_chat_join(peer_id, user_id, invited_by=None):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_, c):
-        c.execute(
-            "INSERT INTO chat_members(peer_id,user_id,first_join_at) VALUES(?,?,?) "
-            "ON CONFLICT(peer_id,user_id) DO NOTHING",
-            (peer_id, user_id, now)
-        )
+        c.execute("""
+            INSERT INTO chat_members(peer_id,user_id,first_join_at,invited_by)
+            VALUES(?,?,?,?)
+            ON CONFLICT(peer_id,user_id) DO NOTHING
+        """, (peer_id, user_id, now, invited_by))
+
+
+def get_inviter(peer_id, user_id):
+    """Кто пригласил пользователя впервые в эту беседу."""
+    with db_cursor() as (_, c):
+        r = c.execute(
+            "SELECT invited_by FROM chat_members WHERE peer_id=? AND user_id=?",
+            (peer_id, user_id)
+        ).fetchone()
+        return r[0] if r and r[0] else None
+
+
+def get_first_inviter(user_id):
+    """Кто первый раз пригласил пользователя в проект (самая ранняя запись)."""
+    with db_cursor() as (_, c):
+        r = c.execute(
+            "SELECT invited_by FROM chat_members WHERE user_id=? AND invited_by IS NOT NULL "
+            "ORDER BY first_join_at ASC LIMIT 1",
+            (user_id,)
+        ).fetchone()
+        return r[0] if r else None
+
+
+def get_all_chat_memberships(user_id):
+    """Все peer_id, где пользователь числится в chat_members."""
+    with db_cursor() as (_, c):
+        c.execute("SELECT peer_id FROM chat_members WHERE user_id=?", (user_id,))
+        return [row[0] for row in c.fetchall()]
 
 
 def get_chat_join_date(peer_id, user_id):
@@ -313,6 +361,18 @@ def get_chat_join_date(peer_id, user_id):
             "SELECT first_join_at FROM chat_members WHERE peer_id=? AND user_id=?",
             (peer_id, user_id)
         ).fetchone()
+        return r[0] if r else None
+
+
+def update_last_message(user_id):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET last_message_at=? WHERE user_id=?", (now, user_id))
+
+
+def get_last_message_at(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT last_message_at FROM users WHERE user_id=?", (user_id,)).fetchone()
         return r[0] if r else None
 
 
@@ -383,11 +443,12 @@ def transfer_coins(sender, target, amount):
 def add_message_count(user_id, peer_id=None):
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo('Europe/Moscow')).date().isoformat()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with db_cursor(True) as (_, c):
         c.execute(
-            "UPDATE users SET messages_total=messages_total+1 WHERE user_id=?",
-            (user_id,)
+            "UPDATE users SET messages_total=messages_total+1, last_message_at=? WHERE user_id=?",
+            (now, user_id)
         )
         c.execute("""
             INSERT INTO messages_stats(user_id,date,count) VALUES(?,?,1)
@@ -466,6 +527,16 @@ def get_all_chats():
         return c.fetchall()
 
 
+def get_broadcast_chats():
+    with db_cursor() as (_, c):
+        c.execute("""
+            SELECT peer_id FROM chat_settings
+            WHERE broadcast_enabled=1 AND peer_id NOT IN (SELECT peer_id FROM hidden_chats)
+            ORDER BY peer_id
+        """)
+        return [row[0] for row in c.fetchall()]
+
+
 def ensure_chat_settings(c, peer_id):
     c.execute("""
         INSERT INTO chat_settings(peer_id,welcome_message)
@@ -529,7 +600,12 @@ def set_feature(peer_id, feature, enabled):
     if feature == 'чистка':
         set_cleanup_enabled(peer_id, enabled)
         return
-    col = {'казино': 'casino_enabled', 'мут': 'mute_enabled', 'дуэль': 'duel_enabled'}[feature]
+    col = {
+        'казино': 'casino_enabled',
+        'мут': 'mute_enabled',
+        'дуэль': 'duel_enabled',
+        'рассылка': 'broadcast_enabled',
+    }[feature]
     with db_cursor(True) as (_, c):
         ensure_chat_settings(c, peer_id)
         c.execute(f"UPDATE chat_settings SET {col}=? WHERE peer_id=?", (int(enabled), peer_id))
@@ -538,7 +614,12 @@ def set_feature(peer_id, feature, enabled):
 def get_feature(peer_id, feature):
     if feature == 'чистка':
         return is_cleanup_enabled(peer_id)
-    col = {'казино': 'casino_enabled', 'мут': 'mute_enabled', 'дуэль': 'duel_enabled'}[feature]
+    col = {
+        'казино': 'casino_enabled',
+        'мут': 'mute_enabled',
+        'дуэль': 'duel_enabled',
+        'рассылка': 'broadcast_enabled',
+    }[feature]
     with db_cursor() as (_, c):
         c.execute(f"SELECT {col} FROM chat_settings WHERE peer_id=?", (peer_id,))
         r = c.fetchone()
@@ -651,6 +732,28 @@ def get_warning_stats(user_id, is_admin_warning=False, peer_id=None):
         w = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q} AND date(created_at)>=?", wparams).fetchone()[0]
         m = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q} AND date(created_at)>=?", mparams).fetchone()[0]
         t = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q}", params).fetchone()[0]
+        return {'today': int(d), 'week': int(w), 'month': int(m), 'total': int(t)}
+
+
+def add_kick_event(user_id, peer_id, kicked_by):
+    with db_cursor(True) as (_, c):
+        c.execute(
+            "INSERT INTO kick_events(user_id,peer_id,kicked_by,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
+            (user_id, peer_id, kicked_by)
+        )
+
+
+def get_kick_stats(user_id):
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo('Europe/Moscow')).date()
+    week = today - timedelta(days=6)
+    month = today - timedelta(days=29)
+
+    with db_cursor() as (_, c):
+        d = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)=?", (user_id, today.isoformat())).fetchone()[0]
+        w = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)>=?", (user_id, week.isoformat())).fetchone()[0]
+        m = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)>=?", (user_id, month.isoformat())).fetchone()[0]
+        t = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=?", (user_id,)).fetchone()[0]
         return {'today': int(d), 'week': int(w), 'month': int(m), 'total': int(t)}
 
 
@@ -1043,7 +1146,6 @@ def get_application_cooldown(user_id):
 # ============ ЗАКРЕПЫ ============
 
 def get_chat_pin(peer_id):
-    """Возвращает (conversation_message_id, message_id, updated_at) или None."""
     with db_cursor() as (_, c):
         r = c.execute(
             "SELECT conversation_message_id, message_id, updated_at FROM chat_pins WHERE peer_id=?",

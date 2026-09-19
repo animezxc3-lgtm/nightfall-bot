@@ -44,7 +44,6 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         from applications import review_application
         result = review_application(applicant_id, user_id, decision, vk, conversation_message_id)
         if result == 'ok':
-            # сообщение уже отредактировано внутри review_application
             pass
         else:
             edit(result)
@@ -255,6 +254,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл переключить чистку\n'
             'лл переключить казино\n'
             'лл переключить дуэль\n'
+            'лл переключить рассылку\n'
             'лл скрыть беседу\n'
             'лл показать беседу\n'
             'лл чс адм @user\n'

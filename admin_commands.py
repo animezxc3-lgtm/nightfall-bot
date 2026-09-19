@@ -15,6 +15,7 @@ COMMAND_MIN_LEVEL = {
     'пред': 2, 'анпред': 3, 'фулл анпред': 3, 'кик': 2, 'фулл кик': 2, 'бан': 3, 'разбан': 3, 'банстат': 3,
     'админы': 1, 'проверить': 2, 'снять': 5, 'изменить приветствие': 4, 'рассылка': 5, 'приветствие': 4,
     'переключить мут': 5, 'переключить чистку': 5, 'переключить казино': 5, 'переключить дуэль': 5,
+    'переключить рассылку': 5,
     'скрыть беседу': 5, 'показать беседу': 5,
     'чс адм': 5, 'убрать чс адм': 5,
     'беседа': 1, 'беседы': 1,
@@ -34,7 +35,6 @@ def get_admin_level(user_id, peer_id=None):
 
 
 def _refresh_pin(vk, peer_id):
-    """Тихо обновляет закреп беседы. Ошибки не всплывают наружу."""
     try:
         from pin_manager import update_pin_in_chat
         update_pin_in_chat(vk, peer_id)
@@ -43,7 +43,6 @@ def _refresh_pin(vk, peer_id):
 
 
 def _refresh_all_pins(vk):
-    """Обновляет закрепы во всех беседах (для глобальных ролей)."""
     try:
         from pin_manager import update_all_pins
         update_all_pins(vk)
@@ -95,6 +94,123 @@ def _require(key, uid, peer, vk):
     return True
 
 
+def _fmt_date(s):
+    if not s:
+        return '—'
+    s = str(s)[:10]
+    try:
+        y,m,d = s.split('-')
+        return f'{d}.{m}.{y}'
+    except Exception:
+        return s
+
+
+def _build_check(vk, target, peer_id):
+    from relationships import get_display_name
+    u = get_user(target)
+    if not u:
+        return None
+
+    name = u[1] or 'Пользователь'
+    display = u[2] or name.split()[0]
+    link = f'[id{target}|{name}]'
+
+    # Пригласивший
+    inviter_id = get_first_inviter(target)
+    if inviter_id:
+        inviter_name = get_display_name(inviter_id) or ''
+        if not inviter_name:
+            try:
+                info = vk.users.get(user_ids=inviter_id)[0]
+                inviter_name = f"{info.get('first_name','')} {info.get('last_name','')}".strip()
+            except Exception:
+                inviter_name = 'Пользователь'
+        inviter_line = f'[id{inviter_id}|{inviter_name}]'
+    else:
+        inviter_line = '—'
+
+    join_date = _fmt_date(u[14])
+
+    # Права
+    level = get_admin_level(target, peer_id)
+    rights = ROLE_NAMES.get(level, 'Участник')
+
+    # Бан и ЧС
+    banned_line = 'Да' if is_banned(target) else 'Нет'
+    bl_line = 'Да' if is_in_admin_blacklist(target) else 'Нет'
+
+    # Предупреждения
+    adm_w = get_warning_stats(target, True)
+    w = get_warning_stats(target, False)
+    kicks = get_kick_stats(target)
+
+    # Беседы
+    peers = get_all_chat_memberships(target)
+    chat_titles = []
+    if peers:
+        try:
+            ids = ','.join(str(p) for p in peers)
+            data = vk.messages.getConversationsById(peer_ids=ids).get('items', [])
+            for item in data:
+                t = item.get('chat_settings', {}).get('title') or f"Беседа {item.get('peer',{}).get('local_id','')}"
+                chat_titles.append(t)
+        except Exception as e:
+            print(f'⚠️ Не удалось получить беседы: {e}')
+
+    # Активность
+    msgs = get_messages_stats(target)
+    last = get_last_message_at(target)
+    last_fmt = '—'
+    if last:
+        try:
+            dt = __import__('datetime').datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+            last_fmt = dt.strftime("%d.%m.%Y %H:%M")
+        except Exception:
+            last_fmt = last
+
+    lines = [
+        f'👤 {link}',
+        f'Пригласивший в первый раз: {inviter_line}',
+        f'Дата создания профиля: {join_date}',
+        f'⚙️ Права: {rights}',
+        '',
+        '─────────✦─────────',
+        f'Находится ли в бане: {banned_line}',
+        f'Находится ли в ЧС Администрации: {bl_line}',
+        '',
+        'Адм. предупреждений: ',
+        f'▪За неделю - {adm_w["week"]}',
+        f'▪За месяц - {adm_w["month"]}',
+        f'▪За все время - {adm_w["total"]}',
+        'Предупреждений: ',
+        f'▪За неделю - {w["week"]}',
+        f'▪За месяц - {w["month"]}',
+        f'▪За все время - {w["total"]}',
+        'Был исключен: ',
+        f'▪За неделю - {kicks["week"]}',
+        f'▪За месяц - {kicks["month"]}',
+        f'▪За все время - {kicks["total"]}',
+        '',
+        '─────────✦─────────',
+        'Беседы в которых состоит пользователь:',
+    ]
+    if chat_titles:
+        for t in chat_titles:
+            lines.append(f'-{t}')
+    else:
+        lines.append('-—')
+    lines.extend([
+        '─────────✦─────────',
+        'Активность по сообщениям:',
+        f'▪За все время: {msgs["total"]}',
+        f'▪За месяц: {msgs["month"]}',
+        f'▪За неделю: {msgs["week"]}',
+        f'▪За день: {msgs["today"]}',
+        f'▪Последнее сообщение: {last_fmt}',
+    ])
+    return '\n'.join(lines)
+
+
 def handle_admin_command(command, user_id, peer_id, vk, text):
     keys = sorted(COMMAND_MIN_LEVEL, key=len, reverse=True)
     key = next((k for k in keys if command == k or command.startswith(k + ' ')), None)
@@ -110,19 +226,11 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, f'❌ Формат: `лл {key} @user`')
             return True
         if key == 'проверить':
-            s = get_messages_stats(target)
-            w = get_warning_stats(target, True, peer_id)
-            out = [
-                f'🔎 Проверка: {_user_link(vk, target)}',
-                f'💬 Сообщения: {s["today"]} / {s["week"]} / {s["month"]} / {s["total"]}',
-                f'⚠️ Предупреждения: {w["today"]} / {w["week"]} / {w["month"]} / {w["total"]}',
-                f'🔨 Бан: {"да" if is_banned(target) else "нет"}',
-                f'🚫 ЧС Администрации: {"занесён" if is_in_admin_blacklist(target) else "не занесён"}',
-            ]
-            if get_admin_level(target, peer_id) > 0:
-                a = get_warning_stats(target, True, peer_id)
-                out.append(f'👑 Админские предупреждения: {a["today"]} / {a["week"]} / {a["month"]} / {a["total"]}')
-            _send(vk, peer_id, '\n'.join(out))
+            text_out = _build_check(vk, target, peer_id)
+            if not text_out:
+                _send(vk, peer_id, '❌ Пользователь не найден.')
+                return True
+            _send(vk, peer_id, text_out)
             return True
 
         if not can_act(user_id, target, peer_id):
@@ -143,6 +251,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             return True
         if key == 'бан':
             ban_user(target)
+            add_kick_event(target, peer_id, user_id)
             try:
                 vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
             except Exception:
@@ -154,6 +263,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, '✅ Пользователь разбанен.')
             return True
         if key in {'кик', 'фулл кик'}:
+            add_kick_event(target, peer_id, user_id)
             try:
                 vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
                 _send(vk, peer_id, '✅ Пользователь исключён из беседы.')
@@ -328,15 +438,30 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
 
     if key == 'приветствие':
         w, p = get_welcome_data(peer_id)
-        _send(vk, peer_id, f'👋 Текущее приветствие:\n\n{w}' + (f'\n🖼 {p}' if p else ''))
+        args = {
+            'peer_id': peer_id,
+            'random_id': 0,
+            'message': w or '',
+            'disable_mentions': True,
+        }
+        if p:
+            args['attachment'] = p
+        try:
+            vk.messages.send(**args)
+        except Exception as e:
+            print(f'⚠️ Не удалось показать приветствие: {e}')
         return True
 
     if key == 'рассылка':
         if not rest:
             _send(vk, peer_id, '❌ Укажи сообщение.')
             return True
+        chats = get_broadcast_chats()
+        if not chats:
+            _send(vk, peer_id, '❌ Ни в одной беседе рассылка не включена.')
+            return True
         ok = bad = 0
-        for cp, _ in get_all_chats():
+        for cp in chats:
             try:
                 vk.messages.send(peer_id=cp, random_id=0, message=rest)
                 ok += 1
@@ -371,6 +496,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             f'📈 Всё время: {a["total"]}\n'
             f'⚙️ Казино: {"включено" if get_feature(peer_id, "казино") else "выключено"}\n'
             f'⚔️ Дуэли: {"включены" if get_feature(peer_id, "дуэль") else "выключены"}\n'
+            f'📢 Рассылка: {"включена" if get_feature(peer_id, "рассылка") else "выключена"}\n'
             f'🔇 Мут: {"включён" if get_feature(peer_id, "мут") else "выключен"}\n'
             f'🧹 Чистка: {"включена" if get_feature(peer_id, "чистка") else "выключена"}\n'
             f'🙈 Скрыта: {"да" if is_chat_hidden(peer_id) else "нет"}'

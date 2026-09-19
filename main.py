@@ -110,7 +110,7 @@ for event in longpoll.listen():
                     create_user(invited_uid,'Участник')
             ensure_chat(peer)
             if get_chat_join_date(peer,invited_uid) is None:
-                record_chat_join(peer,invited_uid)
+                record_chat_join(peer,invited_uid, invited_by=uid)
             send_welcome(peer,invited_uid)
             continue
 

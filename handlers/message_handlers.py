@@ -55,7 +55,7 @@ def handle_command(command,user_id,peer_id,vk,text):
         if not target or not get_user(target):
             _send(vk, peer_id, '❌ Пользователь не найден.')
             return
-        _send(vk, peer_id, get_profile(target, peer_id))
+        _send(vk, peer_id, get_profile(target, peer_id), exclude_actor=True)
         return
     if command == 'баланс' or command.startswith('баланс '):
         target = _target(command[len('баланс'):].strip()) if command != 'баланс' else user_id
@@ -71,6 +71,11 @@ def handle_command(command,user_id,peer_id,vk,text):
             _send(vk, peer_id, '❌ Пользователь не найден.')
             return
         _send(vk, peer_id, get_activity(target))
+        return
+
+    # === ЗАЯВКА (в беседе) ===
+    if command == 'заявка':
+        _send(vk, peer_id, '📩 Заявка подаётся в личные сообщения бота.\n\nНапиши боту в ЛС: `лл заявка`.')
         return
 
     # === ЗАКРЕПЫ ===
