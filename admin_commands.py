@@ -105,6 +105,47 @@ def _fmt_date(s):
         return s
 
 
+def _get_user_chats(vk, target, current_peer=None):
+    """Возвращает названия бесед, где состоит пользователь (через VK API)."""
+    from config import APPLICATIONS_PEER_ID
+    from database import get_all_chats, is_chat_hidden
+
+    titles = []
+    seen = set()
+
+    if current_peer and current_peer > 2000000000:
+        try:
+            data = vk.messages.getConversationsById(peer_ids=current_peer).get('items', [])
+            if data:
+                t = data[0].get('chat_settings', {}).get('title') or f'Беседа {current_peer - 2000000000}'
+                titles.append(t)
+                seen.add(t)
+        except Exception:
+            pass
+
+    for peer, _ in get_all_chats():
+        if peer == current_peer:
+            continue
+        if peer == APPLICATIONS_PEER_ID:
+            continue
+        if is_chat_hidden(peer):
+            continue
+        try:
+            members = vk.messages.getConversationMembers(peer_id=peer).get('items', [])
+            if any(m.get('member_id') == target for m in members):
+                data = vk.messages.getConversationsById(peer_ids=peer).get('items', [])
+                title = f'Беседа {peer - 2000000000}'
+                if data:
+                    title = data[0].get('chat_settings', {}).get('title') or title
+                if title not in seen:
+                    titles.append(title)
+                    seen.add(title)
+        except Exception:
+            continue
+
+    return titles
+
+
 def _build_check(vk, target, peer_id):
     from relationships import get_display_name
     u = get_user(target)
@@ -112,10 +153,8 @@ def _build_check(vk, target, peer_id):
         return None
 
     name = u[1] or 'Пользователь'
-    display = u[2] or name.split()[0]
     link = f'[id{target}|{name}]'
 
-    # Пригласивший
     inviter_id = get_first_inviter(target)
     if inviter_id:
         inviter_name = get_display_name(inviter_id) or ''
@@ -141,10 +180,8 @@ def _build_check(vk, target, peer_id):
     w = get_warning_stats(target, False)
     kicks = get_kick_stats(target)
 
-    # Беседы через VK API — Вариант 2
     chat_titles = _get_user_chats(vk, target, peer_id)
 
-    # Активность
     msgs = get_messages_stats(target)
     last = get_last_message_at(target)
     last_fmt = '—'
@@ -196,49 +233,6 @@ def _build_check(vk, target, peer_id):
         f'▪Последнее сообщение: {last_fmt}',
     ])
     return '\n'.join(lines)
-
-
-def _get_user_chats(vk, target, current_peer=None):
-    """Возвращает названия бесед, где состоит пользователь (через VK API)."""
-    from config import APPLICATIONS_PEER_ID
-    from database import get_all_chats, is_chat_hidden
-
-    titles = []
-    seen = set()
-
-    # сначала текущая беседа
-    if current_peer and current_peer > 2000000000:
-        try:
-            data = vk.messages.getConversationsById(peer_ids=current_peer).get('items', [])
-            if data:
-                t = data[0].get('chat_settings', {}).get('title') or f'Беседа {current_peer - 2000000000}'
-                titles.append(t)
-                seen.add(t)
-        except Exception:
-            pass
-
-    # потом все остальные беседы бота
-    for peer, _ in get_all_chats():
-        if peer == current_peer:
-            continue
-        if peer == APPLICATIONS_PEER_ID:
-            continue
-        if is_chat_hidden(peer):
-            continue
-        try:
-            members = vk.messages.getConversationMembers(peer_id=peer).get('items', [])
-            if any(m.get('member_id') == target for m in members):
-                data = vk.messages.getConversationsById(peer_ids=peer).get('items', [])
-                title = f'Беседа {peer - 2000000000}'
-                if data:
-                    title = data[0].get('chat_settings', {}).get('title') or title
-                if title not in seen:
-                    titles.append(title)
-                    seen.add(title)
-        except Exception:
-            continue
-
-    return titles
 
 
 def handle_admin_command(command, user_id, peer_id, vk, text):
@@ -429,16 +423,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if not target or not photo_id.isdigit():
             _send(vk, peer_id, '❌ Укажи пользователя и числовой ID фотографии.')
             return True
-        album_id = PROFILE_WELCOME_ALBUM_ID
-        try:
-            photos = vk.photos.get(owner_id=-GROUP_ID, album_id=album_id, count=1000)['items']
-            photo = next((x for x in photos if str(x['id']) == photo_id), None)
-        except Exception as e:
-            _send(vk, peer_id, f'❌ Не удалось проверить фотографию в альбоме: {e}')
-            return True
-        if not photo:
-            _send(vk, peer_id, '❌ Фотография с таким ID не найдена в указанном альбоме.')
-            return True
+        # Без проверки через photos.get — собираем attachment напрямую
         set_profile_image(target, f'photo-{GROUP_ID}_{photo_id}')
         _send(vk, peer_id, f'🖼 Аватар для {_user_link(vk, target)} установлен.')
         return True
@@ -448,17 +433,8 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         m = re.match(r'^(\d+)\s+(.+)$', rest)
         if m:
             photo_id, text = m.group(1), m.group(2).strip()
-            try:
-                photos = vk.photos.get(owner_id=-GROUP_ID, album_id=PROFILE_WELCOME_ALBUM_ID, count=1000)['items']
-                if any(str(x['id']) == photo_id for x in photos):
-                    photo = f'photo-{GROUP_ID}_{photo_id}'
-                    rest = text
-                else:
-                    _send(vk, peer_id, '❌ Фотография с таким ID не найдена в альбоме.')
-                    return True
-            except Exception as e:
-                _send(vk, peer_id, f'❌ Не удалось проверить фотографию: {e}')
-                return True
+            photo = f'photo-{GROUP_ID}_{photo_id}'
+            rest = text
         if not rest:
             _send(vk, peer_id, '❌ Формат: `лл изменить приветствие <ID фото> <текст>`')
             return True
@@ -483,6 +459,9 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         return True
 
     if key == 'рассылка':
+        if not get_feature(peer_id, 'рассылка'):
+            _send(vk, peer_id, '❌ Рассылка отключена в этой беседе.')
+            return True
         if not rest:
             _send(vk, peer_id, '❌ Укажи сообщение.')
             return True
