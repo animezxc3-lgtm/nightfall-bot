@@ -365,7 +365,8 @@ def get_chat_join_date(peer_id, user_id):
 
 
 def update_last_message(user_id):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo('Europe/Moscow')).strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_, c):
         c.execute("UPDATE users SET last_message_at=? WHERE user_id=?", (now, user_id))
 
@@ -442,8 +443,9 @@ def transfer_coins(sender, target, amount):
 
 def add_message_count(user_id, peer_id=None):
     from zoneinfo import ZoneInfo
-    today = datetime.now(ZoneInfo('Europe/Moscow')).date().isoformat()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    moscow = ZoneInfo('Europe/Moscow')
+    today = datetime.now(moscow).date().isoformat()
+    now = datetime.now(moscow).strftime("%Y-%m-%d %H:%M:%S")
 
     with db_cursor(True) as (_, c):
         c.execute(

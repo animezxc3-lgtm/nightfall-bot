@@ -131,31 +131,18 @@ def _build_check(vk, target, peer_id):
 
     join_date = _fmt_date(u[14])
 
-    # Права
     level = get_admin_level(target, peer_id)
     rights = ROLE_NAMES.get(level, 'Участник')
 
-    # Бан и ЧС
     banned_line = 'Да' if is_banned(target) else 'Нет'
     bl_line = 'Да' if is_in_admin_blacklist(target) else 'Нет'
 
-    # Предупреждения
     adm_w = get_warning_stats(target, True)
     w = get_warning_stats(target, False)
     kicks = get_kick_stats(target)
 
-    # Беседы
-    peers = get_all_chat_memberships(target)
-    chat_titles = []
-    if peers:
-        try:
-            ids = ','.join(str(p) for p in peers)
-            data = vk.messages.getConversationsById(peer_ids=ids).get('items', [])
-            for item in data:
-                t = item.get('chat_settings', {}).get('title') or f"Беседа {item.get('peer',{}).get('local_id','')}"
-                chat_titles.append(t)
-        except Exception as e:
-            print(f'⚠️ Не удалось получить беседы: {e}')
+    # Беседы через VK API — Вариант 2
+    chat_titles = _get_user_chats(vk, target, peer_id)
 
     # Активность
     msgs = get_messages_stats(target)
@@ -209,6 +196,49 @@ def _build_check(vk, target, peer_id):
         f'▪Последнее сообщение: {last_fmt}',
     ])
     return '\n'.join(lines)
+
+
+def _get_user_chats(vk, target, current_peer=None):
+    """Возвращает названия бесед, где состоит пользователь (через VK API)."""
+    from config import APPLICATIONS_PEER_ID
+    from database import get_all_chats, is_chat_hidden
+
+    titles = []
+    seen = set()
+
+    # сначала текущая беседа
+    if current_peer and current_peer > 2000000000:
+        try:
+            data = vk.messages.getConversationsById(peer_ids=current_peer).get('items', [])
+            if data:
+                t = data[0].get('chat_settings', {}).get('title') or f'Беседа {current_peer - 2000000000}'
+                titles.append(t)
+                seen.add(t)
+        except Exception:
+            pass
+
+    # потом все остальные беседы бота
+    for peer, _ in get_all_chats():
+        if peer == current_peer:
+            continue
+        if peer == APPLICATIONS_PEER_ID:
+            continue
+        if is_chat_hidden(peer):
+            continue
+        try:
+            members = vk.messages.getConversationMembers(peer_id=peer).get('items', [])
+            if any(m.get('member_id') == target for m in members):
+                data = vk.messages.getConversationsById(peer_ids=peer).get('items', [])
+                title = f'Беседа {peer - 2000000000}'
+                if data:
+                    title = data[0].get('chat_settings', {}).get('title') or title
+                if title not in seen:
+                    titles.append(title)
+                    seen.add(title)
+        except Exception:
+            continue
+
+    return titles
 
 
 def handle_admin_command(command, user_id, peer_id, vk, text):
