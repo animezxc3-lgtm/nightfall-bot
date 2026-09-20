@@ -147,14 +147,6 @@ def migrate_database():
             PRIMARY KEY(peer_id, user_id)
         );
 
-        CREATE TABLE IF NOT EXISTS chat_weekly_message_totals (
-            peer_id INTEGER NOT NULL,
-            week_start TEXT NOT NULL,
-            user_id INTEGER NOT NULL,
-            count INTEGER DEFAULT 0,
-            PRIMARY KEY(peer_id, week_start, user_id)
-        );
-
         CREATE TABLE IF NOT EXISTS chat_members (
             peer_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
@@ -222,10 +214,18 @@ def migrate_database():
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS twinks (
+            twink_id INTEGER PRIMARY KEY,
+            owner_id INTEGER NOT NULL,
+            added_at TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_warning_events_user_date
             ON warning_events(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_kick_events_user_date
             ON kick_events(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_twinks_owner
+            ON twinks(owner_id);
         """)
 
         cols = {row[1] for row in c.execute("PRAGMA table_info(users)").fetchall()}
@@ -281,6 +281,83 @@ def get_user(user_id):
             return None
         return tuple(r)
 
+
+# ============ ТВИНКИ ============
+
+def add_twink(owner_id, twink_id):
+    """Привязывает твинка к владельцу. Возвращает True/False."""
+    if owner_id == twink_id:
+        return False
+    with db_cursor(True) as (_, c):
+        # Проверка: твинк уже привязан?
+        r = c.execute("SELECT owner_id FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
+        if r:
+            return False
+        c.execute("""
+            INSERT INTO twinks(twink_id, owner_id, added_at)
+            VALUES(?,?,CURRENT_TIMESTAMP)
+        """, (twink_id, owner_id))
+        return True
+
+
+def remove_twink(twink_id):
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM twinks WHERE twink_id=?", (twink_id,))
+
+
+def get_owner(twink_id):
+    """Возвращает owner_id, если user — твинк, иначе None."""
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT owner_id FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
+        return r[0] if r else None
+
+
+def get_twinks(owner_id):
+    """Возвращает список twink_id для указанного владельца."""
+    with db_cursor() as (_, c):
+        c.execute("SELECT twink_id FROM twinks WHERE owner_id=? ORDER BY added_at", (owner_id,))
+        return [r[0] for r in c.fetchall()]
+
+
+def is_twink(twink_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT 1 FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
+        return r is not None
+
+
+# ============ ПОИСК БЕСЕДЫ ПО НОМЕРУ ============
+
+def find_chats_by_number(vk, number):
+    """Ищет беседы, в названии которых в конце стоит указанное число/строка.
+    Возвращает список peer_id."""
+    import re as _re
+    chats = get_all_chats()
+    if not chats:
+        return []
+    ids = [p for p, _ in chats]
+    names = {}
+    try:
+        data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
+        for x in data:
+            pid = int(x.get('peer', {}).get('id'))
+            names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
+    except Exception as e:
+        print(f'⚠️ find_chats_by_number: {e}')
+        return []
+
+    result = []
+    target = str(number).strip().lower()
+    for pid, title in names.items():
+        m = _re.match(r'^(.*?)\s*(\S+)\s*$', title)
+        if not m:
+            continue
+        tail = m.group(2).strip().lower()
+        if tail == target:
+            result.append(pid)
+    return result
+
+
+# ============ ОСТАЛЬНОЕ ============
 
 def set_global_role(user_id, level):
     with db_cursor(True) as (_, c):
@@ -1166,7 +1243,6 @@ def set_chat_pin(peer_id, conversation_message_id=None, message_id=None):
 
 
 def set_chat_pin_cmid(peer_id, cmid):
-    """Сохраняет conversation_message_id для беседы (не затирая message_id)."""
     with db_cursor(True) as (_, c):
         c.execute("""
             INSERT INTO chat_pins(peer_id, conversation_message_id, updated_at)
@@ -1178,7 +1254,6 @@ def set_chat_pin_cmid(peer_id, cmid):
 
 
 def reset_chat_pin_cmid(peer_id):
-    """Сбрасывает cmid, чтобы поймать заново из LongPoll."""
     with db_cursor(True) as (_, c):
         c.execute("UPDATE chat_pins SET conversation_message_id=NULL WHERE peer_id=?", (peer_id,))
 

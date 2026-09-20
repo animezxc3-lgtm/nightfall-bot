@@ -7,7 +7,8 @@ from config import TOKEN,GROUP_ID,CREATOR_ID,ALLOWED_IN_DM
 from database import (
     migrate_database,user_exists,create_user,set_admin_level,ensure_chat,
     add_message_count,claim_power_for_messages,get_feature,record_chat_join,
-    get_chat_join_date,get_welcome_data,get_chat_pin,set_chat_pin_cmid
+    get_chat_join_date,get_welcome_data,get_chat_pin,set_chat_pin_cmid,
+    is_twink,get_owner
 )
 from handlers.message_handlers import handle_command
 from handlers.button_handlers import handle_button
@@ -108,8 +109,41 @@ for event in longpoll.listen():
                     print(f'📌 Закреп: сохранён cmid={cmid} для беседы {peer}')
             continue
 
+        # === АВТОКИК ПРИ ВЫХОДЕ (chat_kick_user) ===
         action=m.get('action') or {}
         action_type=action.get('type') if isinstance(action,dict) else None
+        member_id=action.get('member_id') if isinstance(action,dict) else None
+
+        if is_chat and action_type == 'chat_kick_user' and member_id:
+            # Если member_id == from_id — человек вышел сам.
+            if member_id == uid:
+                # Не трогаем админов
+                if get_admin_level(member_id, peer) >= 1:
+                    print(f'⏭️ Выход админа: {member_id} из {peer} — не трогаем.')
+                    continue
+                # Не трогаем твинков
+                if is_twink(member_id):
+                    print(f'⏭️ Выход твинка: {member_id} из {peer} — не трогаем.')
+                    continue
+                # Кикаем, чтобы не вернулся
+                try:
+                    vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=member_id)
+                    print(f'👢 Автокик после выхода: {member_id} из {peer}')
+                except Exception as e:
+                    print(f'⚠️ Не удалось кикнуть после выхода: {e}')
+                # Пишем сообщение
+                try:
+                    vk.messages.send(
+                        peer_id=peer, random_id=0,
+                        message='Империи нужны воистину верные люди.',
+                        disable_mentions=True,
+                    )
+                except Exception as e:
+                    print(f'⚠️ Не удалось отправить сообщение о выходе: {e}')
+                continue
+            # Иначе — обычный кик админом, не трогаем.
+            continue
+
         invited_uid=action.get('member_id') if isinstance(action,dict) else None
         if is_chat and action_type in ('chat_invite_user','chat_invite_user_by_link') and invited_uid:
             if not user_exists(invited_uid):

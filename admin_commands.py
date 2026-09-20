@@ -30,7 +30,21 @@ def get_admin_level(user_id, peer_id=None):
     if global_level:
         return global_level
     if peer_id and peer_id > 2000000000:
-        return get_admin_level_for_chat(peer_id, user_id)
+        local = get_admin_level_for_chat(peer_id, user_id)
+        if local:
+            return local
+    # Проверяем, является ли user твинком — тогда берём права владельца
+    owner = get_owner(user_id)
+    if owner:
+        if owner == CREATOR_ID:
+            return 6
+        owner_global = get_global_role(owner)
+        if owner_global:
+            return owner_global
+        if peer_id and peer_id > 2000000000:
+            owner_local = get_admin_level_for_chat(peer_id, owner)
+            if owner_local:
+                return owner_local
     return 0
 
 
@@ -66,6 +80,14 @@ def _user_link(vk, user_id, fallback='Пользователь'):
     except Exception:
         label = fallback
     return f'[id{user_id}|{label}]'
+
+
+def _user_fullname(vk, user_id):
+    try:
+        info = vk.users.get(user_ids=user_id)[0]
+        return f"{info.get('first_name','')} {info.get('last_name','')}".strip() or 'Пользователь'
+    except Exception:
+        return 'Пользователь'
 
 
 def can_act(actor, target, peer):
@@ -106,7 +128,6 @@ def _fmt_date(s):
 
 
 def _get_user_chats(vk, target, current_peer=None):
-    """Возвращает названия бесед, где состоит пользователь (через VK API)."""
     from config import APPLICATIONS_PEER_ID
     from database import get_all_chats, is_chat_hidden
 
@@ -147,7 +168,6 @@ def _get_user_chats(vk, target, current_peer=None):
 
 
 def _build_check(vk, target, peer_id):
-    from relationships import get_display_name
     u = get_user(target)
     if not u:
         return None
@@ -157,13 +177,7 @@ def _build_check(vk, target, peer_id):
 
     inviter_id = get_first_inviter(target)
     if inviter_id:
-        inviter_name = get_display_name(inviter_id) or ''
-        if not inviter_name:
-            try:
-                info = vk.users.get(user_ids=inviter_id)[0]
-                inviter_name = f"{info.get('first_name','')} {info.get('last_name','')}".strip()
-            except Exception:
-                inviter_name = 'Пользователь'
+        inviter_name = _user_fullname(vk, inviter_id)
         inviter_line = f'[id{inviter_id}|{inviter_name}]'
     else:
         inviter_line = '—'
@@ -187,7 +201,8 @@ def _build_check(vk, target, peer_id):
     last_fmt = '—'
     if last:
         try:
-            dt = __import__('datetime').datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+            from datetime import datetime as _dt
+            dt = _dt.strptime(last, "%Y-%m-%d %H:%M:%S")
             last_fmt = dt.strftime("%d.%m.%Y %H:%M")
         except Exception:
             last_fmt = last
@@ -233,6 +248,21 @@ def _build_check(vk, target, peer_id):
         f'▪Последнее сообщение: {last_fmt}',
     ])
     return '\n'.join(lines)
+
+
+def _resolve_target_peer(vk, rest_part):
+    """Если rest_part — число, ищем беседу с таким номером.
+    Если строка — ищем точное название (последнее слово).
+    Возвращает (peer_id, error_text)."""
+    num = rest_part.strip()
+    if not num:
+        return None, '❌ Укажи номер беседы.'
+    chats = find_chats_by_number(vk, num)
+    if not chats:
+        return None, f'❌ Беседа с номером «{num}» не найдена.'
+    if len(chats) > 1:
+        return None, f'❌ Найдено несколько бесед с номером «{num}». Уточните название.'
+    return chats[0], None
 
 
 def handle_admin_command(command, user_id, peer_id, vk, text):
@@ -373,19 +403,15 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if len(parts) != 3:
             _send(vk, peer_id, '❌ Для уровней 1–4 укажи номер беседы.')
             return True
-        try:
-            chat_number = int(parts[2])
-        except Exception:
-            chat_number = -1
-        target_peer = chat_number if chat_number > 2000000000 else 2000000000 + chat_number
-        if chat_number <= 0:
-            _send(vk, peer_id, '❌ Некорректный номер беседы.')
+        target_peer, err = _resolve_target_peer(vk, parts[2])
+        if err:
+            _send(vk, peer_id, err)
             return True
         if not can_act(user_id, target, target_peer):
             _send(vk, peer_id, '❌ Нельзя управлять равным или более высоким уровнем.')
             return True
         set_admin_level(target_peer, target, level, ROLE_NAMES[level])
-        _send(vk, peer_id, f'✅ Выдан уровень {level} — {ROLE_NAMES[level]} в беседе {chat_number}.')
+        _send(vk, peer_id, f'✅ Выдан уровень {level} — {ROLE_NAMES[level]} в беседе «{parts[2]}».')
         _refresh_pin(vk, target_peer)
         return True
 
@@ -423,7 +449,6 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if not target or not photo_id.isdigit():
             _send(vk, peer_id, '❌ Укажи пользователя и числовой ID фотографии.')
             return True
-        # Без проверки через photos.get — собираем attachment напрямую
         set_profile_image(target, f'photo-{GROUP_ID}_{photo_id}')
         _send(vk, peer_id, f'🖼 Аватар для {_user_link(vk, target)} установлен.')
         return True

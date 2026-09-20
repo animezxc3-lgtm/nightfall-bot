@@ -18,6 +18,13 @@ def _user_link(vk, user_id, fallback='Пользователь'):
         label=get_display_name_safe(user_id, fallback)
     return f'[id{user_id}|{label}]'
 
+def _user_fullname(vk, user_id):
+    try:
+        info = vk.users.get(user_ids=user_id)[0]
+        return f"{info.get('first_name','')} {info.get('last_name','')}".strip() or 'Пользователь'
+    except Exception:
+        return 'Пользователь'
+
 def _send(vk,peer_id,msg,keyboard=None,attachment=None,exclude_actor=False):
     actor=get_user_id()
     if actor and not exclude_actor and not get_exclude_actor():
@@ -35,7 +42,7 @@ def get_display_name_safe(uid, fallback):
     return get_display_name(uid) or fallback
 
 def handle_command(command,user_id,peer_id,vk,text):
-    list_commands={'меню','магазин','беседы','админы','банстат'}
+    list_commands={'меню','магазин','беседы','админы','банстат','твинки'}
     set_user(user_id, command.split()[0] in list_commands)
     is_chat=peer_id>2000000000
     if not is_chat:
@@ -47,7 +54,7 @@ def handle_command(command,user_id,peer_id,vk,text):
         from keyboards import menu_keyboard
         from admin_commands import get_admin_level
         is_admin = get_admin_level(user_id, peer_id) >= 1
-        _send(vk, peer_id, '📖 **Меню Lelouch Bot**\n\nВыбери нужный раздел ниже. При нажатии текст этого сообщения будет заменён на выбранный раздел.', menu_keyboard(is_admin), exclude_actor=True)
+        _send(vk, peer_id, '📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже. При нажатии текст этого сообщения будет заменён на выбранный раздел.', menu_keyboard(is_admin), exclude_actor=True)
         return
 
     if command == 'профиль' or command.startswith('профиль '):
@@ -71,6 +78,87 @@ def handle_command(command,user_id,peer_id,vk,text):
             _send(vk, peer_id, '❌ Пользователь не найден.')
             return
         _send(vk, peer_id, get_activity(target))
+        return
+
+    # === ТВИНКИ ===
+    if command == 'твинк' or command.startswith('твинк '):
+        parts = command.split(maxsplit=2)
+        # лл твинк @user
+        # лл твинк убрать @user
+        if len(parts) >= 2 and parts[1] == 'убрать':
+            if len(parts) < 3:
+                _send(vk, peer_id, '❌ Формат: `лл твинк убрать @user`')
+                return
+            target = _target(parts[2])
+            if not target:
+                _send(vk, peer_id, '❌ Укажи пользователя.')
+                return
+            if not is_twink(target):
+                _send(vk, peer_id, '❌ Этот пользователь не является твинком.')
+                return
+            owner = get_owner(target)
+            # Кто может убирать:
+            # - сам владелец (owner)
+            # - уровни 5-6
+            actor_level = __import__('admin_commands').get_admin_level(user_id, peer_id)
+            if user_id != owner and actor_level < 5:
+                _send(vk, peer_id, '❌ Убирать чужих твинков могут только Вершитель правосудия и выше.')
+                return
+            remove_twink(target)
+            _send(vk, peer_id, f'✅ {_user_link(vk, target)} больше не твинк.')
+            return
+
+        # лл твинк @user — привязать
+        if len(parts) < 2:
+            _send(vk, peer_id, 'Используй @user для того, чтобы привязать твинк-аккаунт.')
+            return
+        twink_id = _target(parts[1])
+        if not twink_id:
+            _send(vk, peer_id, '❌ Укажи пользователя.')
+            return
+        if twink_id == user_id:
+            _send(vk, peer_id, '❌ Нельзя привязать себя к себе.')
+            return
+        if not get_user(twink_id):
+            # создаём профиль автоматически
+            try:
+                name = _user_fullname(vk, twink_id)
+                create_user(twink_id, name)
+            except Exception as e:
+                print(f'⚠️ Не удалось создать профиль твинка: {e}')
+        if is_twink(twink_id):
+            existing_owner = get_owner(twink_id)
+            _send(vk, peer_id, f'❌ Этот аккаунт уже привязан как твинк к [id{existing_owner}|владельцу].')
+            return
+        ok = add_twink(user_id, twink_id)
+        if ok:
+            _send(vk, peer_id, f'✅ {_user_link(vk, twink_id)} привязан как твой твинк.')
+        else:
+            _send(vk, peer_id, '❌ Не удалось привязать твинк.')
+        return
+
+    if command == 'твинки' or command.startswith('твинки '):
+        # лл твинки [@user]
+        parts = command.split(maxsplit=1)
+        if len(parts) == 1:
+            target = user_id
+        else:
+            t = _target(parts[1])
+            if not t:
+                _send(vk, peer_id, '❌ Укажи пользователя.')
+                return
+            target = t
+        # если target — твинк, берём владельца
+        owner = get_owner(target) or target
+        twinks = get_twinks(owner)
+        header = f'👥 Твинки {_user_link(vk, owner)}:'
+        if not twinks:
+            _send(vk, peer_id, header + '\n-нет')
+            return
+        lines = [header]
+        for tid in twinks:
+            lines.append(f'- {_user_fullname(vk, tid)} ([id{tid}|ссылка])')
+        _send(vk, peer_id, '\n'.join(lines))
         return
 
     # === ЗАЯВКА (в беседе) ===
@@ -265,7 +353,7 @@ def handle_command(command,user_id,peer_id,vk,text):
     # Property
     if command=='магазин':
         from keyboards import SHOP_MENU
-        _send(vk,peer_id,'🛒 **Магазин**\n\nЧто вас интересует?',SHOP_MENU,exclude_actor=True); return
+        _send(vk,peer_id,'🛒 Магазин\n\nЧто вас интересует?',SHOP_MENU,exclude_actor=True); return
     m=re.match(r'^(дом|машина|телефон)\s+(\d+)$',command)
     if m:
         category={'дом':'housing','машина':'car','телефон':'phone'}[m.group(1)]; idx=int(m.group(2))-1; items=get_items(category)
@@ -289,7 +377,7 @@ def handle_command(command,user_id,peer_id,vk,text):
         _send(vk,peer_id,result); return
     if command=='устроиться':
         from keyboards import profession_keyboard
-        _send(vk,peer_id,'💼 **Выберите профессию:**',profession_keyboard()); return
+        _send(vk,peer_id,'💼 Выберите профессию:',profession_keyboard()); return
     if command=='уволиться': _send(vk,peer_id,fire(user_id)); return
 
     _send(vk,peer_id,'❌ Неизвестная команда.')
