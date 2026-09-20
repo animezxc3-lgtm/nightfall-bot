@@ -10,7 +10,7 @@ from config import (
 from database import (
     get_all_global_roles, get_admins_for_chat,
     get_all_chats, get_chat_pin, set_chat_pin,
-    is_chat_hidden,
+    is_chat_hidden, set_chat_pin_cmid, reset_chat_pin_cmid,
 )
 
 
@@ -135,9 +135,10 @@ def build_pin_text(vk, peer_id):
 
 
 def _send_new_pin(vk, peer_id, text):
-    """Отправляет новое сообщение закрепа и сохраняет message_id и cmid."""
+    """Отправляет новое сообщение закрепа.
+    cmid не пытаемся получить через getById — его перехватит main.py из LongPoll."""
     try:
-        result = vk.messages.send(
+        vk.messages.send(
             peer_id=peer_id,
             random_id=0,
             message=text,
@@ -148,20 +149,16 @@ def _send_new_pin(vk, peer_id, text):
         print(f'⚠️ Не удалось отправить закреп в {peer_id}: {e}')
         return None
 
-    message_id = result if isinstance(result, int) else None
-    cmid = None
-
-    if message_id:
-        try:
-            info = vk.messages.getById(message_ids=message_id)
-            items = info.get('items') or []
-            if items:
-                cmid = items[0].get('conversation_message_id')
-        except Exception as e:
-            print(f'⚠️ getById не сработал для {peer_id}: {e}')
-
-    set_chat_pin(peer_id, conversation_message_id=cmid, message_id=message_id)
-    return message_id
+    # Создаём/обновляем запись, cmid = NULL. Потом main.py его заполнит.
+    with __import__('database').db_cursor(True) as (_, c):
+        c.execute("""
+            INSERT INTO chat_pins(peer_id, conversation_message_id, message_id, updated_at)
+            VALUES(?, NULL, NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT(peer_id) DO UPDATE SET
+                conversation_message_id=NULL,
+                updated_at=CURRENT_TIMESTAMP
+        """, (peer_id,))
+    return None
 
 
 def update_pin_in_chat(vk, peer_id, notify=False):
@@ -169,44 +166,27 @@ def update_pin_in_chat(vk, peer_id, notify=False):
     text = build_pin_text(vk, peer_id)
     pin = get_chat_pin(peer_id)  # (cmid, message_id, updated_at) или None
 
-    if pin and (pin[0] or pin[1]):
+    if pin and pin[0]:
         cmid = pin[0]
-        message_id = pin[1]
-
-        edited = False
-
-        if cmid:
-            try:
-                vk.messages.edit(
-                    peer_id=peer_id,
-                    conversation_message_id=cmid,
-                    message=text,
-                    disable_mentions=True,
-                    dont_parse_links=1,
-                )
-                edited = True
-            except Exception as e:
-                print(f'⚠️ edit по cmid не сработал в {peer_id}: {e}')
-
-        if not edited and message_id:
-            try:
-                vk.messages.edit(
-                    peer_id=peer_id,
-                    message_id=message_id,
-                    message=text,
-                    disable_mentions=True,
-                    dont_parse_links=1,
-                )
-                edited = True
-            except Exception as e:
-                print(f'⚠️ edit по message_id не сработал в {peer_id}: {e}')
-
-        if edited:
+        try:
+            vk.messages.edit(
+                peer_id=peer_id,
+                conversation_message_id=cmid,
+                message=text,
+                disable_mentions=True,
+                dont_parse_links=1,
+            )
             return True, 'updated'
+        except Exception as e:
+            print(f'⚠️ edit по cmid не сработал в {peer_id}: {e}')
+            # cmid устарел — сбрасываем его, чтобы перехватить заново.
+            reset_chat_pin_cmid(peer_id)
+            return True, 'reset'
 
-        print(f'⚠️ Закреп в {peer_id} не редактируется, создаю новый.')
-        _send_new_pin(vk, peer_id, text)
-        return True, 'recreated'
+    if pin and not pin[0]:
+        # Ожидаем, что LongPoll вот-вот пришлёт cmid. Пропускаем.
+        print(f'⏳ Закреп в {peer_id} ожидает cmid, пропуск.')
+        return True, 'waiting'
 
     _send_new_pin(vk, peer_id, text)
     return True, 'created'

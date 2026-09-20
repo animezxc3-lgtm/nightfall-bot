@@ -326,7 +326,6 @@ def record_chat_join(peer_id, user_id, invited_by=None):
 
 
 def get_inviter(peer_id, user_id):
-    """Кто пригласил пользователя впервые в эту беседу."""
     with db_cursor() as (_, c):
         r = c.execute(
             "SELECT invited_by FROM chat_members WHERE peer_id=? AND user_id=?",
@@ -336,7 +335,6 @@ def get_inviter(peer_id, user_id):
 
 
 def get_first_inviter(user_id):
-    """Кто первый раз пригласил пользователя в проект (самая ранняя запись)."""
     with db_cursor() as (_, c):
         r = c.execute(
             "SELECT invited_by FROM chat_members WHERE user_id=? AND invited_by IS NOT NULL "
@@ -347,7 +345,6 @@ def get_first_inviter(user_id):
 
 
 def get_all_chat_memberships(user_id):
-    """Все peer_id, где пользователь числится в chat_members."""
     with db_cursor() as (_, c):
         c.execute("SELECT peer_id FROM chat_members WHERE user_id=?", (user_id,))
         return [row[0] for row in c.fetchall()]
@@ -1166,6 +1163,24 @@ def set_chat_pin(peer_id, conversation_message_id=None, message_id=None):
                 message_id=COALESCE(excluded.message_id, chat_pins.message_id),
                 updated_at=CURRENT_TIMESTAMP
         """, (peer_id, conversation_message_id, message_id))
+
+
+def set_chat_pin_cmid(peer_id, cmid):
+    """Сохраняет conversation_message_id для беседы (не затирая message_id)."""
+    with db_cursor(True) as (_, c):
+        c.execute("""
+            INSERT INTO chat_pins(peer_id, conversation_message_id, updated_at)
+            VALUES(?,?,CURRENT_TIMESTAMP)
+            ON CONFLICT(peer_id) DO UPDATE SET
+                conversation_message_id=excluded.conversation_message_id,
+                updated_at=CURRENT_TIMESTAMP
+        """, (peer_id, cmid))
+
+
+def reset_chat_pin_cmid(peer_id):
+    """Сбрасывает cmid, чтобы поймать заново из LongPoll."""
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE chat_pins SET conversation_message_id=NULL WHERE peer_id=?", (peer_id,))
 
 
 # ============ РАБОТА ============

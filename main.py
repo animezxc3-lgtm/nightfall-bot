@@ -7,7 +7,7 @@ from config import TOKEN,GROUP_ID,CREATOR_ID,ALLOWED_IN_DM
 from database import (
     migrate_database,user_exists,create_user,set_admin_level,ensure_chat,
     add_message_count,claim_power_for_messages,get_feature,record_chat_join,
-    get_chat_join_date,get_welcome_data
+    get_chat_join_date,get_welcome_data,get_chat_pin,set_chat_pin_cmid
 )
 from handlers.message_handlers import handle_command
 from handlers.button_handlers import handle_button
@@ -96,7 +96,17 @@ for event in longpoll.listen():
 
         if event.type!=VkBotEventType.MESSAGE_NEW:continue
         m=event.object.message; text=m.get('text','').strip();peer=m['peer_id'];uid=m['from_id'];is_chat=peer>2000000000
-        if uid<=0:continue
+        if uid<=0 and not (is_chat and uid == -GROUP_ID):continue
+
+        # === ПЕРЕХВАТ СООБЩЕНИЙ ОТ БОТА (для закрепа) ===
+        if is_chat and uid == -GROUP_ID:
+            cmid = m.get('conversation_message_id')
+            if cmid:
+                pin = get_chat_pin(peer)
+                if pin and not pin[0]:
+                    set_chat_pin_cmid(peer, cmid)
+                    print(f'📌 Закреп: сохранён cmid={cmid} для беседы {peer}')
+            continue
 
         action=m.get('action') or {}
         action_type=action.get('type') if isinstance(action,dict) else None
