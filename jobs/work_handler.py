@@ -19,8 +19,8 @@ def work(user_id, *_):
     if level<get_max_level() and exp>=PROMOTION_DAYS:
         new_level=level+1; exp=0
     increment_work_days(user_id); update_job_field(user_id,'exp',exp); update_job_field(user_id,'level',new_level); update_job_field(user_id,'last_work',today)
-    text=f'💼 **{job}**\n📊 Ступень: **{get_level_name(job,new_level)}**\n💰 Зарплата: **+{salary:,}** 🪙\n⚡ Сила Гиаса: **+{POWER_PER_WORK}**'
-    if new_level>level: text += f'\n\n⬆️ **Автоматическое повышение!**\nТеперь ты — **{get_level_name(job,new_level)}**.'
+    text=f'💼 {job}\n📊 Ступень: {get_level_name(job,new_level)}\n💰 Зарплата: +{salary:,} 🪙\n⚡ Сила Гиаса: +{POWER_PER_WORK}'
+    if new_level>level: text += f'\n\n⬆️ Автоматическое повышение!\nТеперь ты — {get_level_name(job,new_level)}.'
     return text
 
 
@@ -33,7 +33,7 @@ def hire(user_id,profession_key,*_):
     update_job_field(user_id,'level',0)
     update_job_field(user_id,'exp',0)
     update_job_field(user_id,'last_work',None)
-    return f"✅ Ты устроился на работу **{PROFESSIONS[profession_key]['name']}**! Повышение — каждые 14 отработанных дней."
+    return f"✅ Ты устроился на работу {PROFESSIONS[profession_key]['name']}! Повышение — каждые 14 отработанных дней."
 
 
 def fire(user_id,*_):

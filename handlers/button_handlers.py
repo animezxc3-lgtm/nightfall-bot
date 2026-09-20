@@ -34,7 +34,6 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
 
     is_admin = get_admin_level(user_id, peer_id) >= 1
 
-    # === ЗАЯВКИ ===
     if cmd in ('app_accept', 'app_decline'):
         applicant_id = payload.get('applicant')
         if not applicant_id:
@@ -49,7 +48,6 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             edit(result)
         return
 
-    # === ДУЭЛЬ ===
     if cmd in ('duel_accept', 'duel_decline'):
         duel = get_duel_for_opponent(user_id)
         if not duel:
@@ -322,7 +320,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         edit(category_text(cat), shop_items_keyboard(cat))
         return
     if cmd == 'shop_main':
-        edit('🛒 **Магазин**\n\nЧто вас интересует?', SHOP_MENU)
+        edit('🛒 Магазин\n\nЧто вас интересует?', SHOP_MENU)
         return
     if cmd == 'buy_property':
         from property_shop import buy_property, category_text

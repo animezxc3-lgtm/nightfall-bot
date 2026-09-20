@@ -30,8 +30,6 @@ QUESTIONS = [
 ]
 
 
-# ---------- Нумерация эмодзи ----------
-
 _EMOJI_DIGITS = {
     '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
     '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣',
@@ -39,13 +37,10 @@ _EMOJI_DIGITS = {
 
 
 def _num(n):
-    """Возвращает эмодзи-номер: 1️⃣..9️⃣, 🔟, 1️⃣1️⃣ и т.д."""
     if n == 10:
         return '🔟'
     return ''.join(_EMOJI_DIGITS[d] for d in str(n))
 
-
-# ---------- Валидация ----------
 
 def _validate_name(text):
     text = text.strip()
@@ -79,20 +74,12 @@ def validate_answer(step, text):
     return _validate_default(text)
 
 
-# ---------- Утилиты ----------
-
 def _timeout_expired(app):
     try:
         updated = datetime.strptime(app['updated_at'], "%Y-%m-%d %H:%M:%S")
     except Exception:
         return False
     return datetime.now() - updated > timedelta(minutes=APPLICATION_TIMEOUT_MINUTES)
-
-
-def _mention(uid, fallback='Пользователь'):
-    from relationships import get_display_name
-    name = get_display_name(uid) or fallback
-    return f'[id{uid}|{name}]'
 
 
 def _vk_name(vk, uid):
@@ -103,10 +90,7 @@ def _vk_name(vk, uid):
         return 'Пользователь'
 
 
-# ---------- Основные функции ----------
-
 def start_application(user_id, vk):
-    """Возвращает текст ответа пользователю в ЛС."""
     app = get_application(user_id)
     if app and app['state'] == 'in_progress':
         if not _timeout_expired(app):
@@ -135,9 +119,9 @@ def start_application(user_id, vk):
 
     upsert_application(user_id, 'in_progress', 0, [])
     return (
-        '📋 **Заявка на администратора**\n\n'
-        'Я задам 10 вопросов. Отвечай на каждый **отдельным сообщением**.\n\n'
-        '❗ Принимается **ТОЛЬКО 1 ОТВЕТ НА ПОСТАВЛЕННЫЙ ВОПРОС**.\n'
+        '📋 Заявка на администратора\n\n'
+        'Я задам 10 вопросов. Отвечай на каждый отдельным сообщением.\n\n'
+        '❗ Принимается ТОЛЬКО 1 ОТВЕТ НА ПОСТАВЛЕННЫЙ ВОПРОС.\n'
         'Если отправишь несколько — зачтётся первый, остальные проигнорирую.\n\n'
         'Чтобы прервать — напиши `лл отмена`.\n\n'
         '━━━━━━━━━━━━━━━\n\n'
@@ -146,7 +130,6 @@ def start_application(user_id, vk):
 
 
 def handle_dm_message(user_id, text, vk):
-    """Обрабатывает сообщение в ЛС в контексте заявки. Возвращает True, если обработано."""
     app = get_application(user_id)
     if not app or app['state'] != 'in_progress':
         return False
@@ -218,16 +201,15 @@ def cancel_application(user_id, vk):
 
 
 def send_to_review(user_id, answers, vk):
-    """Отправляет заявку в беседу заявок."""
     applicant_name = _vk_name(vk, user_id)
     lines = [
-        '📩 **Новая заявка на администратора**',
+        '📩 Новая заявка на администратора',
         f'👤 [id{user_id}|{applicant_name}]',
         f'📅 {datetime.now().strftime("%Y-%m-%d %H:%M")}',
         '━━━━━━━━━━━━━━━',
     ]
     for i, (q, a) in enumerate(zip(QUESTIONS, answers), 1):
-        lines.append(f'**{_num(i)} {q}**')
+        lines.append(f'{_num(i)} {q}')
         lines.append(f'▸ {a}')
         lines.append('')
     lines.append('━━━━━━━━━━━━━━━')
@@ -260,10 +242,6 @@ def send_to_review(user_id, answers, vk):
 
 
 def review_application(applicant_id, reviewer_id, decision, vk, cmid):
-    """
-    decision = 'accept' | 'decline'
-    Редактирует сообщение в беседе заявок, уведомляет пользователя, ставит кулдаун.
-    """
     app = get_application(applicant_id)
     if not app or app['state'] != 'sent':
         return '❌ Заявка уже обработана или неактуальна.'
@@ -274,14 +252,14 @@ def review_application(applicant_id, reviewer_id, decision, vk, cmid):
     if decision == 'accept':
         final = (
             f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\n'
-            f'✅ **Принята** администратором [id{reviewer_id}|{reviewer_name}].'
+            f'✅ Принята администратором [id{reviewer_id}|{reviewer_name}].'
         )
         upsert_application(applicant_id, 'accepted', app['current_step'], app['answers'],
                            app['review_peer_id'], app['review_msg_id'])
     else:
         final = (
             f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\n'
-            f'❌ **Отклонена** администратором [id{reviewer_id}|{reviewer_name}].'
+            f'❌ Отклонена администратором [id{reviewer_id}|{reviewer_name}].'
         )
         upsert_application(applicant_id, 'declined', app['current_step'], app['answers'],
                            app['review_peer_id'], app['review_msg_id'])
@@ -300,9 +278,9 @@ def review_application(applicant_id, reviewer_id, decision, vk, cmid):
             print(f'⚠️ Не удалось отредактировать сообщение заявки: {e}')
 
     if decision == 'accept':
-        msg = '🎉 Поздравляем! Твоя заявка на администратора **принята**.\nОжидай дальнейших указаний от старшей администрации.'
+        msg = '🎉 Поздравляем! Твоя заявка на администратора принята.\nОжидай дальнейших указаний от старшей администрации.'
     else:
-        msg = f'❌ К сожалению, твоя заявка на администратора **отклонена**.\nТы сможешь подать новую через {APPLICATION_COOLDOWN_DAYS} дня.'
+        msg = f'❌ К сожалению, твоя заявка на администратора отклонена.\nТы сможешь подать новую через {APPLICATION_COOLDOWN_DAYS} дня.'
     try:
         vk.messages.send(peer_id=applicant_id, random_id=0, message=msg, disable_mentions=True)
     except Exception as e:
