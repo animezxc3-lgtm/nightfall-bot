@@ -18,6 +18,7 @@ def get_random_multiplier(items=COINS_MULTIPLIERS):
 
 
 def casino(user_id, bet):
+    """Возвращает (result, mult, error). error=None если игра прошла."""
     user = get_user(user_id)
     if not user:
         return None, None, '❌ Профиль не найден.'
