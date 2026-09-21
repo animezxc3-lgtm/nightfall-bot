@@ -136,7 +136,7 @@ def build_pin_text(vk, peer_id):
 
 def _send_new_pin(vk, peer_id, text):
     """Отправляет новое сообщение закрепа.
-    cmid не пытаемся получить через getById — его перехватит main.py из LongPoll."""
+    cmid ловит main.py из LongPoll."""
     try:
         vk.messages.send(
             peer_id=peer_id,
@@ -149,7 +149,6 @@ def _send_new_pin(vk, peer_id, text):
         print(f'⚠️ Не удалось отправить закреп в {peer_id}: {e}')
         return None
 
-    # Создаём/обновляем запись, cmid = NULL. Потом main.py его заполнит.
     with __import__('database').db_cursor(True) as (_, c):
         c.execute("""
             INSERT INTO chat_pins(peer_id, conversation_message_id, message_id, updated_at)
@@ -162,9 +161,10 @@ def _send_new_pin(vk, peer_id, text):
 
 
 def update_pin_in_chat(vk, peer_id, notify=False):
-    """Обновляет закреп в одной беседе. Возвращает (ok, status)."""
+    """Полное обновление закрепа: создать новый, если нет; редактировать, если есть.
+    Используется по команде `лл установить закреп` и `лл обновить закрепы`."""
     text = build_pin_text(vk, peer_id)
-    pin = get_chat_pin(peer_id)  # (cmid, message_id, updated_at) или None
+    pin = get_chat_pin(peer_id)
 
     if pin and pin[0]:
         cmid = pin[0]
@@ -179,12 +179,10 @@ def update_pin_in_chat(vk, peer_id, notify=False):
             return True, 'updated'
         except Exception as e:
             print(f'⚠️ edit по cmid не сработал в {peer_id}: {e}')
-            # cmid устарел — сбрасываем его, чтобы перехватить заново.
             reset_chat_pin_cmid(peer_id)
             return True, 'reset'
 
     if pin and not pin[0]:
-        # Ожидаем, что LongPoll вот-вот пришлёт cmid. Пропускаем.
         print(f'⏳ Закреп в {peer_id} ожидает cmid, пропуск.')
         return True, 'waiting'
 
@@ -192,8 +190,30 @@ def update_pin_in_chat(vk, peer_id, notify=False):
     return True, 'created'
 
 
+def refresh_pin_if_exists(vk, peer_id):
+    """Обновляет закреп ТОЛЬКО если он уже есть (cmid сохранён).
+    Новое сообщение НЕ создаёт."""
+    pin = get_chat_pin(peer_id)
+    if not pin or not pin[0]:
+        return False, 'no_pin'
+    text = build_pin_text(vk, peer_id)
+    try:
+        vk.messages.edit(
+            peer_id=peer_id,
+            conversation_message_id=pin[0],
+            message=text,
+            disable_mentions=True,
+            dont_parse_links=1,
+        )
+        return True, 'updated'
+    except Exception as e:
+        print(f'⚠️ Не удалось обновить закреп {peer_id}: {e}')
+        reset_chat_pin_cmid(peer_id)
+        return False, 'reset'
+
+
 def update_all_pins(vk):
-    """Обновляет закрепы во всех беседах, кроме скрытых и беседы заявок."""
+    """Массовое обновление — создаёт/редактирует, кроме скрытых и беседы заявок."""
     chats = get_all_chats()
     results = []
     for peer_id, _ in chats:

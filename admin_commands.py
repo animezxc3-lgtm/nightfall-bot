@@ -1,5 +1,5 @@
 import re
-from config import CREATOR_ID, GROUP_ID, PROFILE_WELCOME_ALBUM_ID
+from config import CREATOR_ID, GROUP_ID, PROFILE_WELCOME_ALBUM_ID, APPLICATIONS_PEER_ID
 from response_context import get_user_id, get_exclude_actor
 from database import *
 
@@ -48,19 +48,27 @@ def get_admin_level(user_id, peer_id=None):
 
 
 def _refresh_pin(vk, peer_id):
+    """Обновляет закреп ТОЛЬКО если он есть. Новое не создаёт."""
     try:
-        from pin_manager import update_pin_in_chat
-        update_pin_in_chat(vk, peer_id)
+        from pin_manager import refresh_pin_if_exists
+        refresh_pin_if_exists(vk, peer_id)
     except Exception as e:
         print(f'⚠️ Не удалось обновить закреп {peer_id}: {e}')
 
 
 def _refresh_all_pins(vk):
+    """Обновляет все закрепы, где они есть."""
     try:
-        from pin_manager import update_all_pins
-        update_all_pins(vk)
+        from pin_manager import refresh_pin_if_exists
+        from database import get_all_chats, is_chat_hidden
+        for p, _ in get_all_chats():
+            if p == APPLICATIONS_PEER_ID:
+                continue
+            if is_chat_hidden(p):
+                continue
+            refresh_pin_if_exists(vk, p)
     except Exception as e:
-        print(f'⚠️ Не удалось обновить все закрепы: {e}')
+        print(f'⚠️ Не удалось обновить закрепы: {e}')
 
 
 def extract_user_id(text):
@@ -138,7 +146,6 @@ def _fmt_date(s):
 
 
 def _get_user_chats(vk, target, current_peer=None):
-    from config import APPLICATIONS_PEER_ID
     from database import get_all_chats, is_chat_hidden
 
     titles = []
@@ -328,7 +335,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             unban_user(target)
             _send(vk, peer_id, f'разбанил {_user_link(vk, target)}.')
             return True
-        if key in {'кик', 'фулл кик'}:
+        if key == 'кик':
             _ensure_profile(vk, target)
             add_kick_event(target, peer_id, user_id)
             try:
@@ -336,6 +343,32 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 _send(vk, peer_id, f'исключил {_user_link(vk, target)} из беседы.')
             except Exception as e:
                 _send(vk, peer_id, f'❌ Не удалось исключить: {e}', actor_inline=False)
+            return True
+        if key == 'фулл кик':
+            _ensure_profile(vk, target)
+            add_kick_event(target, peer_id, user_id)
+            kicked = 0
+            from database import get_all_chats, is_chat_hidden
+            for cp, _ in get_all_chats():
+                if cp == APPLICATIONS_PEER_ID:
+                    continue
+                if is_chat_hidden(cp):
+                    continue
+                if cp == peer_id:
+                    continue
+                try:
+                    members = vk.messages.getConversationMembers(peer_id=cp).get('items', [])
+                    if any(m.get('member_id') == target for m in members):
+                        vk.messages.removeChatUser(chat_id=cp - 2000000000, user_id=target)
+                        kicked += 1
+                except Exception as e:
+                    print(f'⚠️ Не удалось кикнуть из {cp}: {e}')
+            try:
+                vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
+                kicked += 1
+            except Exception:
+                pass
+            _send(vk, peer_id, f'исключил {_user_link(vk, target)} из {kicked} бесед.')
             return True
         if key == 'снять':
             if get_global_role(target):
@@ -346,9 +379,19 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 _send(vk, peer_id, f'снял глобальную роль с {_user_link(vk, target)}.')
                 _refresh_all_pins(vk)
                 return True
-            set_admin_level(peer_id, target, 0, 'Участник')
-            _send(vk, peer_id, f'снял права с {_user_link(vk, target)} в этой беседе.')
-            _refresh_pin(vk, peer_id)
+            with db_cursor() as (_, c):
+                c.execute("SELECT peer_id FROM admin_chat_rights WHERE user_id=? AND level>0", (target,))
+                rows = c.fetchall()
+            if not rows:
+                _send(vk, peer_id, f'❌ У {_user_link(vk, target)} нет локальных прав ни в одной беседе.', actor_inline=False)
+                return True
+            removed = []
+            for (rp,) in rows:
+                set_admin_level(rp, target, 0, 'Участник')
+                removed.append(rp)
+            _send(vk, peer_id, f'снял права с {_user_link(vk, target)} в {len(removed)} беседах.')
+            for rp in removed:
+                _refresh_pin(vk, rp)
             return True
 
     if key == 'банстат':
