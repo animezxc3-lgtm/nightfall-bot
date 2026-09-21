@@ -33,7 +33,6 @@ def get_admin_level(user_id, peer_id=None):
         local = get_admin_level_for_chat(peer_id, user_id)
         if local:
             return local
-    # Проверяем, является ли user твинком — тогда берём права владельца
     owner = get_owner(user_id)
     if owner:
         if owner == CREATOR_ID:
@@ -88,6 +87,17 @@ def _user_fullname(vk, user_id):
         return f"{info.get('first_name','')} {info.get('last_name','')}".strip() or 'Пользователь'
     except Exception:
         return 'Пользователь'
+
+
+def _ensure_profile(vk, user_id):
+    """Создаёт профиль, если его нет."""
+    if get_user(user_id):
+        return
+    name = _user_fullname(vk, user_id)
+    try:
+        create_user(user_id, name)
+    except Exception as e:
+        print(f'⚠️ Не удалось создать профиль {user_id}: {e}')
 
 
 def can_act(actor, target, peer):
@@ -251,9 +261,6 @@ def _build_check(vk, target, peer_id):
 
 
 def _resolve_target_peer(vk, rest_part):
-    """Если rest_part — число, ищем беседу с таким номером.
-    Если строка — ищем точное название (последнее слово).
-    Возвращает (peer_id, error_text)."""
     num = rest_part.strip()
     if not num:
         return None, '❌ Укажи номер беседы.'
@@ -292,31 +299,40 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             return True
 
         if key == 'пред':
+            _ensure_profile(vk, target)
             n = add_warning(target, peer_id, True)
             _send(vk, peer_id, f'⚠️ Предупреждение выдано пользователю {_user_link(vk, target)}: {n}/3.')
             return True
         if key == 'анпред':
+            _ensure_profile(vk, target)
             left = remove_warning(target, peer_id, True)
-            _send(vk, peer_id, f'✅ У пользователя {_user_link(vk, target)} снято одно предупреждение. Осталось: {left}/3')
+            _send(vk, peer_id, (
+                f'{_user_link(vk, user_id)} снял пред у {_user_link(vk, target)}.\n'
+                f'У {_user_link(vk, target)} стало {left}/3 предупреждений'
+            ))
             return True
         if key == 'фулл анпред':
+            _ensure_profile(vk, target)
             clear_warnings(target, peer_id, True)
             _send(vk, peer_id, '✅ Все предупреждения в этой беседе сняты.')
             return True
         if key == 'бан':
+            _ensure_profile(vk, target)
             ban_user(target)
             add_kick_event(target, peer_id, user_id)
             try:
                 vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
             except Exception:
                 pass
-            _send(vk, peer_id, '🔨 Пользователь забанен и удалён из беседы.')
+            _send(vk, peer_id, 'Пользователь забанен.')
             return True
         if key == 'разбан':
+            _ensure_profile(vk, target)
             unban_user(target)
             _send(vk, peer_id, '✅ Пользователь разбанен.')
             return True
         if key in {'кик', 'фулл кик'}:
+            _ensure_profile(vk, target)
             add_kick_event(target, peer_id, user_id)
             try:
                 vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
@@ -373,6 +389,8 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, f'❌ {_user_link(vk, target)} находится в чёрном списке администрации. Сначала убери его оттуда.')
             return True
 
+        _ensure_profile(vk, target)
+
         actor_level = get_admin_level(user_id, peer_id)
         if target == user_id:
             _send(vk, peer_id, '❌ Нельзя назначить права самому себе.')
@@ -420,9 +438,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if not target:
             _send(vk, peer_id, '❌ Формат: `лл чс адм @user`')
             return True
-        if not get_user(target):
-            _send(vk, peer_id, '❌ У пользователя нет профиля.')
-            return True
+        _ensure_profile(vk, target)
         add_to_admin_blacklist(target, user_id)
         _send(vk, peer_id, f'🚫 {_user_link(vk, target)} занесён в чёрный список администрации.')
         return True
@@ -449,6 +465,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if not target or not photo_id.isdigit():
             _send(vk, peer_id, '❌ Укажи пользователя и числовой ID фотографии.')
             return True
+        _ensure_profile(vk, target)
         set_profile_image(target, f'photo-{GROUP_ID}_{photo_id}')
         _send(vk, peer_id, f'🖼 Аватар для {_user_link(vk, target)} установлен.')
         return True
