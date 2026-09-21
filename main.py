@@ -7,8 +7,7 @@ from config import TOKEN,GROUP_ID,CREATOR_ID,ALLOWED_IN_DM
 from database import (
     migrate_database,user_exists,create_user,set_admin_level,ensure_chat,
     add_message_count,claim_power_for_messages,get_feature,record_chat_join,
-    get_chat_join_date,get_welcome_data,get_chat_pin,set_chat_pin_cmid,
-    is_twink,get_owner
+    get_chat_join_date,get_welcome_data
 )
 from handlers.message_handlers import handle_command
 from handlers.button_handlers import handle_button
@@ -17,8 +16,10 @@ from reactions import maybe_react
 from response_context import set_user
 from admin_commands import get_admin_level
 from applications import start_application, handle_dm_message, cancel_application
+from pin_manager import update_all_pins
 
 MOSCOW=ZoneInfo('Europe/Moscow')
+
 def next_sunday(hour,minute):
     now=datetime.now(MOSCOW); days=(6-now.weekday())%7; t=(now+timedelta(days=days)).replace(hour=hour,minute=minute,second=0,microsecond=0)
     if t<=now:t+=timedelta(days=7)
@@ -55,7 +56,19 @@ def scheduler():
 
 print('⚡ Запуск бота...')
 vk_session=vk_api.VkApi(token=TOKEN); vk=vk_session.get_api(); longpoll=VkBotLongPoll(vk_session,GROUP_ID)
-migrate_database();threading.Thread(target=scheduler,daemon=True).start();print('⚡ Бот готов.')
+migrate_database()
+
+# === СИНХРОНИЗАЦИЯ ЗАКРЕПОВ ПРИ ЗАПУСКЕ ===
+try:
+    print('📌 Проверяю актуальность закрепов...')
+    pin_results = update_all_pins(vk)
+    updated = sum(1 for _, status in pin_results if status == 'updated')
+    print(f'📌 Закрепы синхронизированы. Обновлено: {updated}')
+except Exception as e:
+    print(f'⚠️ Не удалось синхронизировать закрепы при запуске: {e}')
+
+threading.Thread(target=scheduler,daemon=True).start()
+print('⚡ Бот готов.')
 
 for event in longpoll.listen():
     try:
@@ -97,31 +110,27 @@ for event in longpoll.listen():
 
         if event.type!=VkBotEventType.MESSAGE_NEW:continue
         m=event.object.message; text=m.get('text','').strip();peer=m['peer_id'];uid=m['from_id'];is_chat=peer>2000000000
-        if uid<=0 and not (is_chat and uid == -GROUP_ID):continue
+        if uid<=0:continue
 
-        # === АВТОКИК ПРИ ВЫХОДЕ (chat_kick_user) ===
         action=m.get('action') or {}
         action_type=action.get('type') if isinstance(action,dict) else None
         member_id=action.get('member_id') if isinstance(action,dict) else None
 
+        # === АВТОКИК ПРИ ВЫХОДЕ ===
         if is_chat and action_type == 'chat_kick_user' and member_id:
-            # Если member_id == from_id — человек вышел сам.
             if member_id == uid:
-                # Не трогаем админов
                 if get_admin_level(member_id, peer) >= 1:
                     print(f'⏭️ Выход админа: {member_id} из {peer} — не трогаем.')
                     continue
-                # Не трогаем твинков
+                from database import is_twink
                 if is_twink(member_id):
                     print(f'⏭️ Выход твинка: {member_id} из {peer} — не трогаем.')
                     continue
-                # Кикаем, чтобы не вернулся
                 try:
                     vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=member_id)
                     print(f'👢 Автокик после выхода: {member_id} из {peer}')
                 except Exception as e:
                     print(f'⚠️ Не удалось кикнуть после выхода: {e}')
-                # Пишем сообщение
                 try:
                     vk.messages.send(
                         peer_id=peer, random_id=0,
@@ -131,7 +140,6 @@ for event in longpoll.listen():
                 except Exception as e:
                     print(f'⚠️ Не удалось отправить сообщение о выходе: {e}')
                 continue
-            # Иначе — обычный кик админом, не трогаем.
             continue
 
         invited_uid=action.get('member_id') if isinstance(action,dict) else None

@@ -48,27 +48,27 @@ def get_admin_level(user_id, peer_id=None):
 
 
 def _refresh_pin(vk, peer_id):
-    """Обновляет закреп ТОЛЬКО если он есть. Новое не создаёт."""
+    """
+    Обновляет закреп конкретной беседы после изменения
+    локальной администрации.
+    """
     try:
-        from pin_manager import refresh_pin_if_exists
-        refresh_pin_if_exists(vk, peer_id)
+        from pin_manager import refresh_after_admin_change
+        refresh_after_admin_change(vk, peer_id=peer_id, global_change=False)
     except Exception as e:
-        print(f'⚠️ Не удалось обновить закреп {peer_id}: {e}')
+        print(f'⚠️ Не удалось обновить закреп беседы {peer_id}: {e}')
 
 
 def _refresh_all_pins(vk):
-    """Обновляет все закрепы, где они есть."""
+    """
+    Обновляет закрепы всех бесед после изменения
+    глобальной администрации.
+    """
     try:
-        from pin_manager import refresh_pin_if_exists
-        from database import get_all_chats, is_chat_hidden
-        for p, _ in get_all_chats():
-            if p == APPLICATIONS_PEER_ID:
-                continue
-            if is_chat_hidden(p):
-                continue
-            refresh_pin_if_exists(vk, p)
+        from pin_manager import refresh_after_admin_change
+        refresh_after_admin_change(vk, global_change=True)
     except Exception as e:
-        print(f'⚠️ Не удалось обновить закрепы: {e}')
+        print(f'⚠️ Не удалось обновить глобальные закрепы: {e}')
 
 
 def extract_user_id(text):
@@ -114,7 +114,6 @@ def can_act(actor, target, peer):
 
 
 def _send(vk, p, msg, actor_inline=True):
-    """actor_inline=True — добавляет [id|Имя] через пробел в начало."""
     actor = get_user_id()
     if actor and actor_inline and not get_exclude_actor():
         try:
@@ -139,7 +138,7 @@ def _fmt_date(s):
         return '—'
     s = str(s)[:10]
     try:
-        y,m,d = s.split('-')
+        y, m, d = s.split('-')
         return f'{d}.{m}.{y}'
     except Exception:
         return s
