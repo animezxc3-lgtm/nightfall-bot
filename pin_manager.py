@@ -135,10 +135,9 @@ def build_pin_text(vk, peer_id):
 
 
 def _send_new_pin(vk, peer_id, text):
-    """Отправляет новое сообщение закрепа.
-    cmid ловит main.py из LongPoll."""
+    """Отправляет новое сообщение закрепа и сразу получает cmid через getById."""
     try:
-        vk.messages.send(
+        result = vk.messages.send(
             peer_id=peer_id,
             random_id=0,
             message=text,
@@ -149,15 +148,30 @@ def _send_new_pin(vk, peer_id, text):
         print(f'⚠️ Не удалось отправить закреп в {peer_id}: {e}')
         return None
 
+    message_id = result if isinstance(result, int) else None
+    cmid = None
+
+    if message_id:
+        try:
+            info = vk.messages.getById(message_ids=message_id)
+            items = info.get('items') or []
+            if items:
+                cmid = items[0].get('conversation_message_id')
+        except Exception as e:
+            print(f'⚠️ getById не сработал для {peer_id}: {e}')
+
     with __import__('database').db_cursor(True) as (_, c):
         c.execute("""
             INSERT INTO chat_pins(peer_id, conversation_message_id, message_id, updated_at)
-            VALUES(?, NULL, NULL, CURRENT_TIMESTAMP)
+            VALUES(?,?,?,CURRENT_TIMESTAMP)
             ON CONFLICT(peer_id) DO UPDATE SET
-                conversation_message_id=NULL,
+                conversation_message_id=excluded.conversation_message_id,
+                message_id=excluded.message_id,
                 updated_at=CURRENT_TIMESTAMP
-        """, (peer_id,))
-    return None
+        """, (peer_id, cmid, message_id))
+
+    print(f'📌 Закреп {peer_id}: message_id={message_id}, cmid={cmid}')
+    return cmid
 
 
 def update_pin_in_chat(vk, peer_id, notify=False):
