@@ -157,7 +157,8 @@ def handle_command(command,user_id,peer_id,vk,text):
             return
         lines = [header]
         for tid in twinks:
-            lines.append(f'- {_user_fullname(vk, tid)} ([id{tid}|ссылка])')
+            name = _user_fullname(vk, tid)
+            lines.append(f'- [id{tid}|{name}]')
         _send(vk, peer_id, '\n'.join(lines))
         return
 
