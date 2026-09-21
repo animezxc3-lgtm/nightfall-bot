@@ -99,16 +99,6 @@ for event in longpoll.listen():
         m=event.object.message; text=m.get('text','').strip();peer=m['peer_id'];uid=m['from_id'];is_chat=peer>2000000000
         if uid<=0 and not (is_chat and uid == -GROUP_ID):continue
 
-        # === ПЕРЕХВАТ СООБЩЕНИЙ ОТ БОТА (для закрепа) ===
-        if is_chat and uid == -GROUP_ID:
-            cmid = m.get('conversation_message_id')
-            if cmid:
-                pin = get_chat_pin(peer)
-                if pin and not pin[0]:
-                    set_chat_pin_cmid(peer, cmid)
-                    print(f'📌 Закреп: сохранён cmid={cmid} для беседы {peer}')
-            continue
-
         # === АВТОКИК ПРИ ВЫХОДЕ (chat_kick_user) ===
         action=m.get('action') or {}
         action_type=action.get('type') if isinstance(action,dict) else None
