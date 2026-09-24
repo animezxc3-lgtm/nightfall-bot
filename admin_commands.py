@@ -2,6 +2,8 @@ import re
 from config import CREATOR_ID, GROUP_ID, PROFILE_WELCOME_ALBUM_ID, APPLICATIONS_PEER_ID
 from response_context import get_user_id, get_exclude_actor
 from database import *
+from pin_manager import refresh_after_admin_change
+
 
 ROLE_NAMES = {
     1: 'Стажёр',
@@ -11,6 +13,7 @@ ROLE_NAMES = {
     5: 'Вершитель правосудия',
     6: 'Лелуш ви Британия',
 }
+
 COMMAND_MIN_LEVEL = {
     'пред': 2, 'анпред': 3, 'фулл анпред': 3, 'кик': 2, 'фулл кик': 2, 'бан': 3, 'разбан': 3, 'банстат': 3,
     'админы': 1, 'проверить': 2, 'снять': 5, 'изменить приветствие': 4, 'рассылка': 5, 'приветствие': 4,
@@ -23,16 +26,23 @@ COMMAND_MIN_LEVEL = {
 }
 
 
+# ============================================================
+# УРОВЕНЬ АДМИНИСТРАТОРА
+# ============================================================
+
 def get_admin_level(user_id, peer_id=None):
     if user_id == CREATOR_ID:
         return 6
+
     global_level = get_global_role(user_id)
     if global_level:
         return global_level
+
     if peer_id and peer_id > 2000000000:
         local = get_admin_level_for_chat(peer_id, user_id)
         if local:
             return local
+
     owner = get_owner(user_id)
     if owner:
         if owner == CREATOR_ID:
@@ -44,32 +54,40 @@ def get_admin_level(user_id, peer_id=None):
             owner_local = get_admin_level_for_chat(peer_id, owner)
             if owner_local:
                 return owner_local
+
     return 0
 
 
+# ============================================================
+# ОБНОВЛЕНИЕ ЗАКРЕПОВ
+# ============================================================
+
 def _refresh_pin(vk, peer_id):
-    """
-    Обновляет закреп конкретной беседы после изменения
-    локальной администрации.
-    """
     try:
-        from pin_manager import refresh_after_admin_change
-        refresh_after_admin_change(vk, peer_id=peer_id, global_change=False)
+        result = refresh_after_admin_change(
+            vk,
+            peer_id=peer_id,
+            global_change=False,
+        )
+        print(f'📌 Обновление закрепа {peer_id}: {result}')
     except Exception as e:
-        print(f'⚠️ Не удалось обновить закреп беседы {peer_id}: {e}')
+        print(f'❌ Ошибка обновления закрепа {peer_id}: {e}')
 
 
 def _refresh_all_pins(vk):
-    """
-    Обновляет закрепы всех бесед после изменения
-    глобальной администрации.
-    """
     try:
-        from pin_manager import refresh_after_admin_change
-        refresh_after_admin_change(vk, global_change=True)
+        results = refresh_after_admin_change(
+            vk,
+            global_change=True,
+        )
+        print(f'📌 Массовое обновление закрепов: {results}')
     except Exception as e:
-        print(f'⚠️ Не удалось обновить глобальные закрепы: {e}')
+        print(f'❌ Ошибка массового обновления закрепов: {e}')
 
+
+# ============================================================
+# УТИЛИТЫ
+# ============================================================
 
 def extract_user_id(text):
     m = re.search(r'\[id(\d+)\|', text or '')
@@ -128,7 +146,9 @@ def _send(vk, p, msg, actor_inline=True):
 
 def _require(key, uid, peer, vk):
     if get_admin_level(uid, peer) < COMMAND_MIN_LEVEL[key]:
-        _send(vk, peer, f'❌ Недостаточно прав. Требуется уровень {COMMAND_MIN_LEVEL[key]} — {ROLE_NAMES[COMMAND_MIN_LEVEL[key]]}.', actor_inline=False)
+        _send(vk, peer,
+              f'❌ Недостаточно прав. Требуется уровень {COMMAND_MIN_LEVEL[key]} — {ROLE_NAMES[COMMAND_MIN_LEVEL[key]]}.',
+              actor_inline=False)
         return False
     return True
 
@@ -143,6 +163,10 @@ def _fmt_date(s):
     except Exception:
         return s
 
+
+# ============================================================
+# БЕСЕДЫ ПОЛЬЗОВАТЕЛЯ
+# ============================================================
 
 def _get_user_chats(vk, target, current_peer=None):
     from database import get_all_chats, is_chat_hidden
@@ -182,6 +206,10 @@ def _get_user_chats(vk, target, current_peer=None):
 
     return titles
 
+
+# ============================================================
+# ПРОВЕРКА
+# ============================================================
 
 def _build_check(vk, target, peer_id):
     u = get_user(target)
@@ -249,11 +277,13 @@ def _build_check(vk, target, peer_id):
         '─────────✦─────────',
         'Беседы в которых состоит пользователь:',
     ]
+
     if chat_titles:
         for t in chat_titles:
             lines.append(f'-{t}')
     else:
         lines.append('-—')
+
     lines.extend([
         '─────────✦─────────',
         'Активность по сообщениям:',
@@ -263,8 +293,13 @@ def _build_check(vk, target, peer_id):
         f'▪За день: {msgs["today"]}',
         f'▪Последнее сообщение: {last_fmt}',
     ])
+
     return '\n'.join(lines)
 
+
+# ============================================================
+# ПОИСК БЕСЕДЫ ПО НОМЕРУ
+# ============================================================
 
 def _resolve_target_peer(vk, rest_part):
     num = rest_part.strip()
@@ -278,6 +313,10 @@ def _resolve_target_peer(vk, rest_part):
     return chats[0], None
 
 
+# ============================================================
+# ОБРАБОТЧИК
+# ============================================================
+
 def handle_admin_command(command, user_id, peer_id, vk, text):
     keys = sorted(COMMAND_MIN_LEVEL, key=len, reverse=True)
     key = next((k for k in keys if command == k or command.startswith(k + ' ')), None)
@@ -287,11 +326,16 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         return True
     rest = command[len(key):].strip()
 
+    # ========================================================
+    # МОДЕРАЦИЯ
+    # ========================================================
+
     if key in {'пред', 'анпред', 'фулл анпред', 'кик', 'фулл кик', 'бан', 'разбан', 'снять', 'проверить'}:
         target = extract_user_id(rest)
         if not target:
             _send(vk, peer_id, f'❌ Формат: `лл {key} @user`', actor_inline=False)
             return True
+
         if key == 'проверить':
             text_out = _build_check(vk, target, peer_id)
             if not text_out:
@@ -309,16 +353,20 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             n = add_warning(target, peer_id, True)
             _send(vk, peer_id, f'выдал предупреждение {_user_link(vk, target)}. Теперь у него {n}/3.')
             return True
+
         if key == 'анпред':
             _ensure_profile(vk, target)
             left = remove_warning(target, peer_id, True)
-            _send(vk, peer_id, f'снял пред у {_user_link(vk, target)}. У {_user_link(vk, target)} стало {left}/3 предупреждений')
+            _send(vk, peer_id,
+                  f'снял пред у {_user_link(vk, target)}. У {_user_link(vk, target)} стало {left}/3 предупреждений')
             return True
+
         if key == 'фулл анпред':
             _ensure_profile(vk, target)
             clear_warnings(target, peer_id, True)
             _send(vk, peer_id, f'снял все предупреждения у {_user_link(vk, target)}.')
             return True
+
         if key == 'бан':
             _ensure_profile(vk, target)
             ban_user(target)
@@ -329,11 +377,13 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 pass
             _send(vk, peer_id, 'Пользователь забанен.')
             return True
+
         if key == 'разбан':
             _ensure_profile(vk, target)
             unban_user(target)
             _send(vk, peer_id, f'разбанил {_user_link(vk, target)}.')
             return True
+
         if key == 'кик':
             _ensure_profile(vk, target)
             add_kick_event(target, peer_id, user_id)
@@ -343,6 +393,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             except Exception as e:
                 _send(vk, peer_id, f'❌ Не удалось исключить: {e}', actor_inline=False)
             return True
+
         if key == 'фулл кик':
             _ensure_profile(vk, target)
             add_kick_event(target, peer_id, user_id)
@@ -369,63 +420,91 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 pass
             _send(vk, peer_id, f'исключил {_user_link(vk, target)} из {kicked} бесед.')
             return True
+
         if key == 'снять':
             if get_global_role(target):
                 if get_admin_level(user_id, peer_id) < 6:
-                    _send(vk, peer_id, '❌ Глобальную роль может снять только Лелуш ви Британия.', actor_inline=False)
+                    _send(vk, peer_id, '❌ Глобальную роль может снять только Лелуш ви Британия.',
+                          actor_inline=False)
                     return True
                 set_global_role(target, 0)
                 _send(vk, peer_id, f'снял глобальную роль с {_user_link(vk, target)}.')
                 _refresh_all_pins(vk)
                 return True
+
             with db_cursor() as (_, c):
                 c.execute("SELECT peer_id FROM admin_chat_rights WHERE user_id=? AND level>0", (target,))
                 rows = c.fetchall()
+
             if not rows:
-                _send(vk, peer_id, f'❌ У {_user_link(vk, target)} нет локальных прав ни в одной беседе.', actor_inline=False)
+                _send(vk, peer_id, f'❌ У {_user_link(vk, target)} нет локальных прав ни в одной беседе.',
+                      actor_inline=False)
                 return True
+
             removed = []
             for (rp,) in rows:
                 set_admin_level(rp, target, 0, 'Участник')
                 removed.append(rp)
+
             _send(vk, peer_id, f'снял права с {_user_link(vk, target)} в {len(removed)} беседах.')
+
             for rp in removed:
                 _refresh_pin(vk, rp)
             return True
 
+    # ========================================================
+    # БАНСТАТ
+    # ========================================================
+
     if key == 'банстат':
         rows = get_banned_users()
         _send(vk, peer_id, '🔒 В бане никого нет.' if not rows else '\n'.join(
-            ['🔒 Пользователи в бане:'] + [f'{i}. {n or "Пользователь"} — https://vk.com/id{u}' for i, (u, n) in enumerate(rows, 1)]), actor_inline=False)
+            ['🔒 Пользователи в бане:'] + [
+                f'{i}. {n or "Пользователь"} — https://vk.com/id{u}' for i, (u, n) in enumerate(rows, 1)]),
+            actor_inline=False)
         return True
+
+    # ========================================================
+    # АДМИНЫ
+    # ========================================================
 
     if key == 'админы':
         with db_cursor() as (_, c):
-            c.execute('SELECT peer_id,user_id,level FROM admin_chat_rights WHERE level>0 ORDER BY level DESC,peer_id')
+            c.execute(
+                'SELECT peer_id,user_id,level FROM admin_chat_rights WHERE level>0 ORDER BY level DESC,peer_id')
             rows = c.fetchall()
         if not rows:
             _send(vk, peer_id, '📋 Администраторов нет.', actor_inline=False)
             return True
         _send(vk, peer_id, '👑 Администрация по беседам:\n' + '\n'.join(
-            f'Беседа {p}: {ROLE_NAMES.get(l, str(l))} — https://vk.com/id{u}' for p, u, l in rows), actor_inline=False)
+            f'Беседа {p}: {ROLE_NAMES.get(l, str(l))} — https://vk.com/id{u}' for p, u, l in rows),
+            actor_inline=False)
         return True
+
+    # ========================================================
+    # ВЫДАТЬ ПРАВА
+    # ========================================================
 
     if key == 'выдать права':
         parts = rest.split()
         if len(parts) not in (2, 3):
             _send(vk, peer_id, '❌ Формат: `лл выдать права @user <уровень> [номер_беседы]`', actor_inline=False)
             return True
+
         target = extract_user_id(parts[0])
         try:
             level = int(parts[1])
         except Exception:
             level = -1
+
         if not target or level < 1 or level > 6:
             _send(vk, peer_id, '❌ Уровень должен быть от 1 до 6.', actor_inline=False)
             return True
 
         if is_in_admin_blacklist(target):
-            _send(vk, peer_id, f'❌ {_user_link(vk, target)} находится в чёрном списке администрации. Сначала убери его оттуда.', actor_inline=False)
+            _send(vk, peer_id,
+                  f'❌ {_user_link(vk, target)} находится в чёрном списке администрации. Сначала убери его оттуда.',
+                  actor_inline=False)
             return True
 
         _ensure_profile(vk, target)
@@ -437,7 +516,8 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
 
         if level in (5, 6) and len(parts) == 2:
             if actor_level < 6:
-                _send(vk, peer_id, '❌ Только Лелуш ви Британия может назначать глобальные роли.', actor_inline=False)
+                _send(vk, peer_id, '❌ Только Лелуш ви Британия может назначать глобальные роли.',
+                      actor_inline=False)
                 return True
             if level == 6 and target == CREATOR_ID:
                 _send(vk, peer_id, '❌ Этот пользователь уже является создателем.', actor_inline=False)
@@ -450,7 +530,8 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
 
         if level == 6:
             if actor_level < 6:
-                _send(vk, peer_id, '❌ Только создатель может назначать Лелуша ви Британия.', actor_inline=False)
+                _send(vk, peer_id, '❌ Только создатель может назначать Лелуша ви Британия.',
+                      actor_inline=False)
                 return True
             set_global_role(target, 6)
             _send(vk, peer_id, f'назначил {_user_link(vk, target)} на роль Лелуш ви Британия.')
@@ -460,17 +541,25 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if len(parts) != 3:
             _send(vk, peer_id, '❌ Для уровней 1–4 укажи номер беседы.', actor_inline=False)
             return True
+
         target_peer, err = _resolve_target_peer(vk, parts[2])
         if err:
             _send(vk, peer_id, err, actor_inline=False)
             return True
+
         if not can_act(user_id, target, target_peer):
             _send(vk, peer_id, '❌ Нельзя управлять равным или более высоким уровнем.', actor_inline=False)
             return True
+
         set_admin_level(target_peer, target, level, ROLE_NAMES[level])
-        _send(vk, peer_id, f'выдал {_user_link(vk, target)} уровень {level} — {ROLE_NAMES[level]} в беседе «{parts[2]}».')
+        _send(vk, peer_id,
+              f'выдал {_user_link(vk, target)} уровень {level} — {ROLE_NAMES[level]} в беседе «{parts[2]}».')
         _refresh_pin(vk, target_peer)
         return True
+
+    # ========================================================
+    # ЧС АДМ
+    # ========================================================
 
     if key == 'чс адм':
         target = extract_user_id(rest)
@@ -488,11 +577,16 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, '❌ Формат: `лл убрать чс адм @user`', actor_inline=False)
             return True
         if not is_in_admin_blacklist(target):
-            _send(vk, peer_id, f'❌ {_user_link(vk, target)} не в чёрном списке администрации.', actor_inline=False)
+            _send(vk, peer_id, f'❌ {_user_link(vk, target)} не в чёрном списке администрации.',
+                  actor_inline=False)
             return True
         remove_from_admin_blacklist(target)
         _send(vk, peer_id, f'убрал {_user_link(vk, target)} из ЧС Администрации.')
         return True
+
+    # ========================================================
+    # АВАТАР
+    # ========================================================
 
     if key == 'аватар':
         parts = rest.split()
@@ -508,6 +602,10 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         set_profile_image(target, f'photo-{GROUP_ID}_{photo_id}')
         _send(vk, peer_id, f'установил аватар для {_user_link(vk, target)}.')
         return True
+
+    # ========================================================
+    # ПРИВЕТСТВИЕ
+    # ========================================================
 
     if key == 'изменить приветствие':
         photo = ''
@@ -539,6 +637,10 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             print(f'⚠️ Не удалось показать приветствие: {e}')
         return True
 
+    # ========================================================
+    # РАССЫЛКА
+    # ========================================================
+
     if key == 'рассылка':
         if not get_feature(peer_id, 'рассылка'):
             _send(vk, peer_id, '❌ Рассылка отключена в этой беседе.', actor_inline=False)
@@ -560,11 +662,19 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, f'📢 Рассылка завершена. Доставлено: {ok}, ошибок: {bad}.', actor_inline=False)
         return True
 
+    # ========================================================
+    # ПЕРЕКЛЮЧАТЕЛИ
+    # ========================================================
+
     if key.startswith('переключить '):
         feature = key[len('переключить '):]
         state = toggle_feature(peer_id, feature)
         _send(vk, peer_id, f'⚙️ {feature}: {"включено" if state else "выключено"}.', actor_inline=False)
         return True
+
+    # ========================================================
+    # СКРЫТЬ / ПОКАЗАТЬ
+    # ========================================================
 
     if key == 'скрыть беседу':
         hide_chat(peer_id)
@@ -575,6 +685,10 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         unhide_chat(peer_id)
         _send(vk, peer_id, '👁 Эта беседа снова видна в списке `лл беседы`.', actor_inline=False)
         return True
+
+    # ========================================================
+    # БЕСЕДА / БЕСЕДЫ
+    # ========================================================
 
     if key == 'беседа':
         a = get_chat_activity(peer_id)
@@ -601,7 +715,9 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 ids = [p for p, _ in chats]
                 data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
                 names = {
-                    int(x.get('peer', {}).get('id')): (x.get('chat_settings', {}).get('title') or f'Беседа {x.get("peer", {}).get("local_id", "")}')
+                    int(x.get('peer', {}).get('id')): (
+                        x.get('chat_settings', {}).get('title') or f'Беседа {x.get("peer", {}).get("local_id", "")}'
+                    )
                     for x in data
                 }
             except Exception:
