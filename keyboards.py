@@ -43,7 +43,13 @@ SHOP_MENU = {
 
 
 def profession_keyboard():
-    PROFESSION_BUTTONS = {'доктор':'🩺 Доктор','вор':'🥷 Вор','шпион':'🕵️ Шпион','солдат':'🪖 Солдат','программист':'💻 Программист'}
+    PROFESSION_BUTTONS = {
+        'шлюха': '🍆 Шлюха',
+        'алкаш': '🍺 Алкаш',
+        'тиммейт': '🎯 Тиммейт из ада',
+        'врач': '🩺 Врач',
+        'вор': '🥷 Вор',
+    }
     buttons = [_btn(label, 'hire', profession=key) for key, label in PROFESSION_BUTTONS.items()]
     rows = [buttons[:2], buttons[2:4], buttons[4:5]]
     return {'inline': True, 'buttons': rows}
