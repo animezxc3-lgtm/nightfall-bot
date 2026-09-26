@@ -8,10 +8,28 @@ def profile_link(uid):
     return f'https://vk.com/id{uid} ({name})'
 
 def parse_target_id(text):
-    m=re.search(r'\[id(\d+)\|[^\]]+\]',text or '')
-    if m:return int(m.group(1))
-    m=re.search(r'(?:id)?(\d{3,15})',text or '')
-    return int(m.group(1)) if m else None
+    """Универсальный парсер ID из упоминания, ссылки, @username или просто числа."""
+    if not text:
+        return None
+    text = str(text).strip()
+
+    m = re.search(r'\[id(\d+)\|', text)
+    if m:
+        return int(m.group(1))
+
+    m = re.search(r'vk\.(?:com|ru)/id(\d+)', text)
+    if m:
+        return int(m.group(1))
+
+    m = re.search(r'@id(\d+)', text)
+    if m:
+        return int(m.group(1))
+
+    m = re.search(r'\b(\d{3,15})\b', text)
+    if m:
+        return int(m.group(1))
+
+    return None
 
 def _row(uid):
     with db_cursor() as (_,c): c.execute('SELECT partner_id,married,family_surname FROM relationships WHERE user_id=?',(uid,)); return c.fetchone()

@@ -57,13 +57,9 @@ def handle_command(command,user_id,peer_id,vk,text):
         return
 
     if command == 'профиль' or command.startswith('профиль '):
-        target = (
-            _target(
-                command[len('профиль'):].strip()
-            )
-            if command != 'профиль'
-            else user_id
-        )
+        rest = command[len('профиль'):].strip() if command != 'профиль' else ''
+        target = _target(rest) if rest else user_id
+        print(f'🔎 ПРОФИЛЬ: rest="{rest}", target={target}')
 
         if not target or not get_user(target):
             _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
@@ -81,7 +77,10 @@ def handle_command(command,user_id,peer_id,vk,text):
         return
 
     if command == 'баланс' or command.startswith('баланс '):
-        target = _target(command[len('баланс'):].strip()) if command != 'баланс' else user_id
+        rest = command[len('баланс'):].strip() if command != 'баланс' else ''
+        target = _target(rest) if rest else user_id
+        print(f'🔎 БАЛАНС: rest="{rest}", target={target}')
+
         if not target or not get_user(target):
             _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
             return
@@ -99,14 +98,17 @@ def handle_command(command,user_id,peer_id,vk,text):
         return
 
     if command == 'активность' or command.startswith('активность '):
-        target = _target(command[len('активность'):].strip()) if command != 'активность' else user_id
+        rest = command[len('активность'):].strip() if command != 'активность' else ''
+        target = _target(rest) if rest else user_id
+        print(f'🔎 АКТИВНОСТЬ: rest="{rest}", target={target}')
+
         if not target or not get_user(target):
             _send(vk, peer_id, 'Пользователь не найден.')
             return
         _send(vk, peer_id, get_activity(target))
         return
 
-    # === ТВИНКИ (все ответы убраны — молчание) ===
+    # === ТВИНКИ ===
     if command == 'твинк' or command.startswith('твинк '):
         parts = command.split(maxsplit=2)
         if len(parts) >= 2 and parts[1] == 'убрать':
@@ -170,7 +172,7 @@ def handle_command(command,user_id,peer_id,vk,text):
         _send(vk, peer_id, '\n'.join(lines), exclude_actor=True)
         return
 
-    # === ЗАЯВКА (в беседе) ===
+    # === ЗАЯВКА ===
     if command == 'заявка':
         _send(vk, peer_id, '📩 Заявка подаётся в личные сообщения бота.\n\nНапиши боту в ЛС: `лл заявка`.')
         return

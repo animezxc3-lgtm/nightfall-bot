@@ -90,11 +90,27 @@ def _refresh_all_pins(vk):
 # ============================================================
 
 def extract_user_id(text):
-    m = re.search(r'\[id(\d+)\|', text or '')
+    if not text:
+        return None
+    text = str(text).strip()
+
+    m = re.search(r'\[id(\d+)\|', text)
     if m:
         return int(m.group(1))
-    m = re.search(r'\b(\d{3,15})\b', text or '')
-    return int(m.group(1)) if m else None
+
+    m = re.search(r'vk\.(?:com|ru)/id(\d+)', text)
+    if m:
+        return int(m.group(1))
+
+    m = re.search(r'@id(\d+)', text)
+    if m:
+        return int(m.group(1))
+
+    m = re.search(r'\b(\d{3,15})\b', text)
+    if m:
+        return int(m.group(1))
+
+    return None
 
 
 def _user_link(vk, user_id, fallback='Пользователь'):
