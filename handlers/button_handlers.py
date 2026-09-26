@@ -7,8 +7,17 @@ from database import get_duel_for_opponent, delete_duel
 def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=None):
     payload = payload if isinstance(payload, dict) else {}
 
-    def edit(text, kb=None):
-        keyboard_json = json.dumps(kb, ensure_ascii=False, separators=(',', ':')) if kb is not None else None
+    def edit(text, kb=None, attachment=None):
+        keyboard_json = (
+            json.dumps(
+                kb,
+                ensure_ascii=False,
+                separators=(',', ':')
+            )
+            if kb is not None
+            else None
+        )
+
         if conversation_message_id is not None:
             try:
                 vk.messages.edit(
@@ -16,28 +25,43 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
                     conversation_message_id=conversation_message_id,
                     message=text,
                     keyboard=keyboard_json,
+                    attachment=attachment,
                     disable_mentions=True,
                 )
                 return
             except Exception as e:
-                print(f'⚠️ Не удалось отредактировать сообщение меню: {e}')
+                print(
+                    'Не удалось отредактировать '
+                    f'сообщение меню: {e}'
+                )
+
         try:
-            vk.messages.send(
-                peer_id=peer_id,
-                random_id=0,
-                message=text,
-                keyboard=keyboard_json,
-                disable_mentions=True,
-            )
+            args = {
+                'peer_id': peer_id,
+                'random_id': 0,
+                'message': text,
+                'keyboard': keyboard_json,
+                'disable_mentions': True,
+            }
+            if attachment:
+                args['attachment'] = attachment
+            vk.messages.send(**args)
         except Exception as e:
-            print(f'⚠️ Не удалось отправить новое сообщение меню: {e}')
+            print(
+                'Не удалось отправить '
+                f'сообщение меню: {e}'
+            )
 
     is_admin = get_admin_level(user_id, peer_id) >= 1
+
+    # ========================================================
+    # ЗАЯВКИ
+    # ========================================================
 
     if cmd in ('app_accept', 'app_decline'):
         applicant_id = payload.get('applicant')
         if not applicant_id:
-            edit('❌ Ошибка: не указан заявитель.')
+            edit('Ошибка: не указан заявитель.')
             return
         decision = 'accept' if cmd == 'app_accept' else 'decline'
         from applications import review_application
@@ -48,16 +72,19 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             edit(result)
         return
 
+    # ========================================================
+    # ДУЭЛЬ
+    # ========================================================
+
     if cmd in ('duel_accept', 'duel_decline'):
         duel = get_duel_for_opponent(user_id)
         if not duel:
-            edit('❌ Эта дуэль больше неактуальна.')
+            edit('Эта дуэль больше неактуальна.')
             return
         challenger_id, opponent_id, duel_peer_id, _duel_msg_id = duel
         delete_duel(user_id)
 
         if user_id != opponent_id:
-            edit('❌ Эта дуэль не для тебя.')
             return
 
         from relationships import get_display_name
@@ -82,7 +109,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
                     disable_mentions=True,
                 )
             except Exception as e:
-                print(f'⚠️ Не удалось отредактировать отказ от дуэли: {e}')
+                print(f'Не удалось отредактировать отказ от дуэли: {e}')
             return
 
         try:
@@ -94,7 +121,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
                 disable_mentions=True,
             )
         except Exception as e:
-            print(f'⚠️ Не удалось обновить сообщение дуэли: {e}')
+            print(f'Не удалось обновить сообщение дуэли: {e}')
 
         import random, time
         time.sleep(2)
@@ -123,8 +150,12 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
                 disable_mentions=True,
             )
         except Exception as e:
-            print(f'⚠️ Не удалось отредактировать финал дуэли: {e}')
+            print(f'Не удалось отредактировать финал дуэли: {e}')
         return
+
+    # ========================================================
+    # МЕНЮ
+    # ========================================================
 
     if cmd == 'menu_main':
         edit('📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже.', menu_keyboard(is_admin))
@@ -229,7 +260,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
 
     if cmd == 'menu_admin':
         if not is_admin:
-            edit('❌ Этот раздел доступен только администраторам.', back_to_menu_keyboard(False))
+            edit('Этот раздел доступен только администраторам.', back_to_menu_keyboard(False))
             return
         edit(
             '👑 АДМИНИСТРАТИВНЫЕ КОМАНДЫ\n\n'
@@ -282,17 +313,33 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         )
         return
 
+    # ========================================================
+    # ПРОФИЛЬ
+    # ========================================================
+
     if cmd == 'profile':
-        from handlers.user_handlers import get_profile
-        edit(get_profile(user_id, peer_id))
+        from handlers.user_handlers import get_profile_data
+
+        profile_text, profile_attachment = get_profile_data(
+            user_id,
+            peer_id
+        )
+
+        edit(
+            profile_text,
+            attachment=profile_attachment
+        )
         return
+
     if cmd == 'balance':
         from handlers.user_handlers import get_balance
         edit(get_balance(user_id))
         return
+
     if cmd == 'work':
         edit('💼 КОМАНДЫ РАБОТЫ\n\nлл устроиться\nлл работать\nлл уволиться', back_to_menu_keyboard(is_admin))
         return
+
     if cmd == 'casino':
         edit(
             '🎰 КОМАНДЫ КАЗИНО\n\n'
@@ -301,6 +348,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             back_to_menu_keyboard(is_admin),
         )
         return
+
     if cmd == 'shop':
         edit(
             '🛒 КОМАНДЫ МАГАЗИНА\n\n'
@@ -314,19 +362,23 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             back_to_menu_keyboard(is_admin),
         )
         return
+
     if cmd == 'hire':
         from jobs.work_handler import hire
         result = hire(user_id, payload.get('profession', ''))
         edit(result, back_to_menu_keyboard(is_admin))
         return
+
     if cmd == 'shop_category':
         from property_shop import category_text
         cat = payload.get('category')
         edit(category_text(cat), shop_items_keyboard(cat))
         return
+
     if cmd == 'shop_main':
         edit('🛒 Магазин\n\nЧто вас интересует?', SHOP_MENU)
         return
+
     if cmd == 'buy_property':
         from property_shop import buy_property, category_text
         cat = payload.get('category')
@@ -334,17 +386,20 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         ok, msg = buy_property(user_id, cat, name)
         edit(msg + '\n\n' + category_text(cat), back_to_menu_keyboard(is_admin))
         return
+
     if cmd in ('relationship_accept', 'relationship_reject'):
         from relationships import accept_relationship, reject_relationship
         edit(accept_relationship(user_id) if cmd == 'relationship_accept' else reject_relationship(user_id))
         return
+
     if cmd in ('marriage_accept', 'marriage_reject'):
         from relationships import accept_marriage, reject_marriage
         edit(accept_marriage(user_id) if cmd == 'marriage_accept' else reject_marriage(user_id))
         return
+
     if cmd in ('family_accept', 'family_reject'):
         from relationships import accept_family_addition, reject_family_addition
         edit(accept_family_addition(user_id) if cmd == 'family_accept' else reject_family_addition(user_id))
         return
 
-    edit('❌ Неизвестная кнопка.')
+    return

@@ -94,12 +94,12 @@ def start_application(user_id, vk):
     app = get_application(user_id)
     if app and app['state'] == 'in_progress':
         if not _timeout_expired(app):
-            return '❌ У тебя уже есть активная заявка. Продолжай отвечать на вопросы или напиши `лл отмена`.'
+            return 'У тебя уже есть активная заявка. Продолжай отвечать на вопросы или напиши `лл отмена`.'
         delete_application(user_id)
-        return '⏳ Твоя прошлая заявка была сброшена из-за долгого отсутствия. Начни заново: `лл заявка`.'
+        return 'Твоя прошлая заявка была сброшена из-за долгого отсутствия. Начни заново: `лл заявка`.'
 
     if is_in_admin_blacklist(user_id):
-        return '❌ Ты в чёрном списке администрации. Подача заявки невозможна.'
+        return 'Ты в чёрном списке администрации. Подача заявки невозможна.'
 
     cd = get_application_cooldown(user_id)
     if cd:
@@ -107,15 +107,15 @@ def start_application(user_id, vk):
         days = delta.days
         hours = delta.seconds // 3600
         if days > 0:
-            return f'❌ Ты сможешь подать новую заявку через {days} д. {hours} ч.'
-        return f'❌ Ты сможешь подать новую заявку через {hours} ч.'
+            return f'Ты сможешь подать новую заявку через {days} д. {hours} ч.'
+        return f'Ты сможешь подать новую заявку через {hours} ч.'
 
     if get_global_role(user_id) > 0:
-        return '❌ Ты уже состоишь в администрации проекта.'
+        return 'Ты уже состоишь в администрации проекта.'
     with db_cursor() as (_, c):
         r = c.execute("SELECT 1 FROM admin_chat_rights WHERE user_id=? AND level>0 LIMIT 1", (user_id,)).fetchone()
     if r:
-        return '❌ Ты уже состоишь в администрации одной из бесед проекта.'
+        return
 
     upsert_application(user_id, 'in_progress', 0, [])
     return (
@@ -138,7 +138,7 @@ def handle_dm_message(user_id, text, vk):
         delete_application(user_id)
         vk.messages.send(
             peer_id=user_id, random_id=0,
-            message='⏳ Твоя заявка была сброшена из-за долгого отсутствия.\nНачни заново: `лл заявка`.',
+            message='Твоя заявка была сброшена из-за долгого отсутствия.\nНачни заново: `лл заявка`.',
             disable_mentions=True,
         )
         return True
@@ -154,7 +154,7 @@ def handle_dm_message(user_id, text, vk):
     if not ok:
         vk.messages.send(
             peer_id=user_id, random_id=0,
-            message=f'❌ {err}\n\n{_num(step+1)} {QUESTIONS[step]}',
+            message=f'{err}\n\n{_num(step+1)} {QUESTIONS[step]}',
             disable_mentions=True,
         )
         return True
@@ -169,7 +169,7 @@ def handle_dm_message(user_id, text, vk):
         send_to_review(user_id, answers, vk)
         vk.messages.send(
             peer_id=user_id, random_id=0,
-            message='✅ Спасибо! Твоя заявка отправлена на рассмотрение.\n\nОтвет придёт в личные сообщения в течение 24 часов.',
+            message='Спасибо! Твоя заявка отправлена на рассмотрение.\n\nОтвет придёт в личные сообщения в течение 24 часов.',
             disable_mentions=True,
         )
         return True
@@ -177,7 +177,7 @@ def handle_dm_message(user_id, text, vk):
     upsert_application(user_id, 'in_progress', step, answers)
     vk.messages.send(
         peer_id=user_id, random_id=0,
-        message=f'✅ Принято.\n\n{_num(step+1)} {QUESTIONS[step]}',
+        message=f'Принято.\n\n{_num(step+1)} {QUESTIONS[step]}',
         disable_mentions=True,
     )
     return True
@@ -188,14 +188,14 @@ def cancel_application(user_id, vk):
     if not app or app['state'] != 'in_progress':
         vk.messages.send(
             peer_id=user_id, random_id=0,
-            message='❌ У тебя нет активной заявки.',
+            message='У тебя нет активной заявки.',
             disable_mentions=True,
         )
         return
     delete_application(user_id)
     vk.messages.send(
         peer_id=user_id, random_id=0,
-        message='❌ Заявка отменена. Ты можешь подать новую командой `лл заявка`.',
+        message='Заявка отменена. Ты можешь подать новую командой `лл заявка`.',
         disable_mentions=True,
     )
 
@@ -225,7 +225,7 @@ def send_to_review(user_id, answers, vk):
             disable_mentions=True,
         )
     except Exception as e:
-        print(f'⚠️ Не удалось отправить заявку в беседу: {e}')
+        print(f'Не удалось отправить заявку в беседу: {e}')
         return
 
     cmid = None
@@ -236,7 +236,7 @@ def send_to_review(user_id, answers, vk):
             if items:
                 cmid = items[0].get('conversation_message_id')
     except Exception as e:
-        print(f'⚠️ Не удалось получить cmid заявки: {e}')
+        print(f'Не удалось получить cmid заявки: {e}')
 
     upsert_application(user_id, 'sent', len(QUESTIONS), answers, APPLICATIONS_PEER_ID, cmid)
 
@@ -244,7 +244,7 @@ def send_to_review(user_id, answers, vk):
 def review_application(applicant_id, reviewer_id, decision, vk, cmid):
     app = get_application(applicant_id)
     if not app or app['state'] != 'sent':
-        return '❌ Заявка уже обработана или неактуальна.'
+        return 'Заявка уже обработана или неактуальна.'
 
     applicant_name = _vk_name(vk, applicant_id)
     reviewer_name = _vk_name(vk, reviewer_id)
@@ -252,14 +252,14 @@ def review_application(applicant_id, reviewer_id, decision, vk, cmid):
     if decision == 'accept':
         final = (
             f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\n'
-            f'✅ Принята администратором [id{reviewer_id}|{reviewer_name}].'
+            f'Принята администратором [id{reviewer_id}|{reviewer_name}].'
         )
         upsert_application(applicant_id, 'accepted', app['current_step'], app['answers'],
                            app['review_peer_id'], app['review_msg_id'])
     else:
         final = (
             f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\n'
-            f'❌ Отклонена администратором [id{reviewer_id}|{reviewer_name}].'
+            f'Отклонена администратором [id{reviewer_id}|{reviewer_name}].'
         )
         upsert_application(applicant_id, 'declined', app['current_step'], app['answers'],
                            app['review_peer_id'], app['review_msg_id'])
@@ -275,15 +275,15 @@ def review_application(applicant_id, reviewer_id, decision, vk, cmid):
                 disable_mentions=True,
             )
         except Exception as e:
-            print(f'⚠️ Не удалось отредактировать сообщение заявки: {e}')
+            print(f'Не удалось отредактировать сообщение заявки: {e}')
 
     if decision == 'accept':
-        msg = '🎉 Поздравляем! Твоя заявка на администратора принята.\nОжидай дальнейших указаний от старшей администрации.'
+        msg = 'Поздравляем! Твоя заявка на администратора принята.\nОжидай дальнейших указаний от старшей администрации.'
     else:
-        msg = f'❌ К сожалению, твоя заявка на администратора отклонена.\nТы сможешь подать новую через {APPLICATION_COOLDOWN_DAYS} дня.'
+        msg = f'К сожалению, твоя заявка на администратора отклонена.\nТы сможешь подать новую через {APPLICATION_COOLDOWN_DAYS} дня.'
     try:
         vk.messages.send(peer_id=applicant_id, random_id=0, message=msg, disable_mentions=True)
     except Exception as e:
-        print(f'⚠️ Не удалось уведомить {applicant_id}: {e}')
+        print(f'Не удалось уведомить {applicant_id}: {e}')
 
     return 'ok'

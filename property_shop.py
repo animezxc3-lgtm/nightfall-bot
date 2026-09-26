@@ -73,7 +73,7 @@ def format_price(amount):
 
 def shop_text():
     return (
-        "🛒 **Магазин имущества**\n\n"
+        "🛒 Магазин имущества\n\n"
         "Выбери категорию:\n"
         "🏠 Жильё\n"
         "🚗 Автомобили\n"
@@ -85,7 +85,7 @@ def shop_text():
 def category_text(category):
     items = get_items(category)
     if not items:
-        return "❌ Категория не найдена."
+        return ''
     lines = [f"{CATEGORY_NAMES[category]}\n"]
     for i, (name, price, emoji) in enumerate(items, 1):
         lines.append(f"{i}. {emoji} {name} — {format_price(price)} 🪙")
@@ -97,24 +97,24 @@ def buy_property(user_id, category, item_name):
     from database import get_user, purchase_property
     item = find_item(category, item_name)
     if not item:
-        return False, "❌ Такой предмет не найден."
+        return False, ''
     user = get_user(user_id)
     if not user:
-        return False, "❌ Профиль не найден."
+        return False, ''
     current = user[8] if category == "housing" else user[9] if category == "car" else user[10]
     if current != 'Отсутствует':
-        return False, f"❌ У тебя уже есть имущество этой категории: {current}. Сначала продай его."
+        return False, f"У тебя уже есть имущество этой категории"
     if user[4] < item["price"]:
         return False, (
-            f"❌ Недостаточно монет.\n"
+            f"Недостаточно монет.\n"
             f"Цена: {format_price(item['price'])} 🪙\n"
             f"Твой баланс: {format_price(user[4])} 🪙"
         )
     ok = purchase_property(user_id, category, item["name"], item["price"])
     if not ok:
-        return False, "❌ Не удалось совершить покупку. Попробуй ещё раз."
+        return False, ''
     return True, (
-        f"✅ Покупка совершена!\n"
+        f"Покупка совершена!\n"
         f"{item['emoji']} {item['name']}\n"
         f"💰 Потрачено: {format_price(item['price'])} 🪙"
     )

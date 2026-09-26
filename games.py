@@ -21,11 +21,11 @@ def casino(user_id, bet):
     """Возвращает (result, mult, error). error=None если игра прошла."""
     user = get_user(user_id)
     if not user:
-        return None, None, '❌ Профиль не найден.'
+        return None, None, None
     if bet < 1000:
-        return None, None, '❌ Минимальная ставка: 1 000 монет.'
+        return None, None, 'Минимальная ставка: 1 000 монет.'
     if bet > user[4]:
-        return None, None, f'❌ Недостаточно монет. Баланс: {user[4]:,}.'
+        return None, None, 'Недостаточно монет.'
 
     mult = get_random_multiplier()
     result = int(bet * mult)
