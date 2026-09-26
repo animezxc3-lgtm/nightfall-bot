@@ -37,8 +37,7 @@ SHOP_MENU = {
     'buttons': [
         [_btn('🏠 Жильё', 'shop_category', category='housing'),
          _btn('🚗 Автомобили', 'shop_category', category='car')],
-        [_btn('📱 Телефоны', 'shop_category', category='phone'),
-         _btn('⬅️ В меню', 'menu_main')],
+        [_btn('📱 Телефоны', 'shop_category', category='phone')],
     ],
 }
 
@@ -46,7 +45,7 @@ SHOP_MENU = {
 def profession_keyboard():
     PROFESSION_BUTTONS = {'доктор':'🩺 Доктор','вор':'🥷 Вор','шпион':'🕵️ Шпион','солдат':'🪖 Солдат','программист':'💻 Программист'}
     buttons = [_btn(label, 'hire', profession=key) for key, label in PROFESSION_BUTTONS.items()]
-    rows = [buttons[:2], buttons[2:4], buttons[4:5] + [_btn('⬅️ В меню', 'menu_main')]]
+    rows = [buttons[:2], buttons[2:4], buttons[4:5]]
     return {'inline': True, 'buttons': rows}
 
 
