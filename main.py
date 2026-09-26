@@ -7,7 +7,7 @@ from config import TOKEN,GROUP_ID,CREATOR_ID,ALLOWED_IN_DM
 from database import (
     migrate_database,user_exists,create_user,set_admin_level,ensure_chat,
     add_message_count,claim_power_for_messages,get_feature,record_chat_join,
-    get_chat_join_date,get_welcome_data
+    get_chat_join_date,get_welcome_data,is_twink,get_owner
 )
 from handlers.message_handlers import handle_command
 from handlers.button_handlers import handle_button
@@ -45,14 +45,14 @@ def send_welcome(peer_id, user_id):
     try:
         vk.messages.send(**args)
     except Exception as e:
-        print(f'⚠️ Не удалось отправить приветствие в беседе {peer_id}: {e}')
+        print(f'Не удалось отправить приветствие в беседе {peer_id}: {e}')
 
 def scheduler():
     while True:
         target=next_sunday(21,0); time.sleep(max(1,(target-datetime.now(MOSCOW)).total_seconds()))
         try:
             for result in run_cleanup(vk,CREATOR_ID,get_admin_level): print('🧹',result)
-        except Exception as e: print('⚠️ Ошибка чистки:',e)
+        except Exception as e: print(f'Ошибка чистки: {e}')
 
 print('⚡ Запуск бота...')
 vk_session=vk_api.VkApi(token=TOKEN); vk=vk_session.get_api(); longpoll=VkBotLongPoll(vk_session,GROUP_ID)
@@ -65,13 +65,28 @@ try:
     updated = sum(1 for _, status in pin_results if status == 'updated')
     print(f'📌 Закрепы синхронизированы. Обновлено: {updated}')
 except Exception as e:
-    print(f'⚠️ Не удалось синхронизировать закрепы при запуске: {e}')
+    print(f'Не удалось синхронизировать закрепы при запуске: {e}')
 
 threading.Thread(target=scheduler,daemon=True).start()
 print('⚡ Бот готов.')
 
+# === ДЕДУПЛИКАЦИЯ СОБЫТИЙ ===
+processed_events = set()
+MAX_PROCESSED = 2000
+
+
 for event in longpoll.listen():
     try:
+        # Отсеиваем дубли по event_id
+        event_id = getattr(event, 'event_id', None)
+        if event_id is not None:
+            if event_id in processed_events:
+                print(f'⚠️ Дубликат события {event_id} — пропуск.')
+                continue
+            processed_events.add(event_id)
+            if len(processed_events) > MAX_PROCESSED:
+                processed_events.clear()
+
         if event.type == VkBotEventType.MESSAGE_EVENT:
             obj = event.object
             raw_payload = _obj_get(obj, 'payload', '{}')
@@ -80,18 +95,18 @@ for event in longpoll.listen():
             except Exception:
                 payload = {}
             cmd = payload.get('cmd') if isinstance(payload, dict) else None
-            event_id = _obj_get(obj, 'event_id')
+            event_id_cb = _obj_get(obj, 'event_id')
             event_user_id = _obj_get(obj, 'user_id')
             event_peer_id = _obj_get(obj, 'peer_id')
             conversation_message_id = _obj_get(obj, 'conversation_message_id')
             try:
                 vk.messages.sendMessageEventAnswer(
-                    event_id=event_id,
+                    event_id=event_id_cb,
                     user_id=event_user_id,
                     peer_id=event_peer_id,
                 )
             except Exception as answer_error:
-                print(f'⚠️ Не удалось подтвердить callback VK: {answer_error}')
+                print(f'Не удалось подтвердить callback VK: {answer_error}')
             if cmd:
                 handle_button(cmd, event_user_id, event_peer_id, conversation_message_id, vk, payload)
             continue
@@ -122,7 +137,6 @@ for event in longpoll.listen():
                 if get_admin_level(member_id, peer) >= 1:
                     print(f'⏭️ Выход админа: {member_id} из {peer} — не трогаем.')
                     continue
-                from database import is_twink
                 if is_twink(member_id):
                     print(f'⏭️ Выход твинка: {member_id} из {peer} — не трогаем.')
                     continue
@@ -130,7 +144,7 @@ for event in longpoll.listen():
                     vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=member_id)
                     print(f'👢 Автокик после выхода: {member_id} из {peer}')
                 except Exception as e:
-                    print(f'⚠️ Не удалось кикнуть после выхода: {e}')
+                    print(f'Не удалось кикнуть после выхода: {e}')
                 try:
                     vk.messages.send(
                         peer_id=peer, random_id=0,
@@ -138,7 +152,7 @@ for event in longpoll.listen():
                         disable_mentions=True,
                     )
                 except Exception as e:
-                    print(f'⚠️ Не удалось отправить сообщение о выходе: {e}')
+                    print(f'Не удалось отправить сообщение о выходе: {e}')
                 continue
             continue
 
@@ -189,4 +203,4 @@ for event in longpoll.listen():
             maybe_react(text, peer, vk)
         if text.lower().startswith('лл '):handle_command(text[3:].strip().lower(),uid,peer,vk,text)
     except Exception as e:
-        print('⚠️ Ошибка обработки события:',e)
+        print(f'Ошибка обработки события: {e}')
