@@ -261,6 +261,10 @@ def migrate_database():
             c.execute("UPDATE users SET job='Отсутствует', job_level=0, job_exp=0, job_last_work=NULL")
             c.execute("ALTER TABLE users ADD COLUMN job_migrated_v2 INTEGER DEFAULT 1")
             print("🔄 Обнулены работы у всех пользователей (миграция v2)")
+        if "job_migrated_v3" not in cols:
+            c.execute("UPDATE users SET salary=0 WHERE job='Отсутствует'")
+            c.execute("ALTER TABLE users ADD COLUMN job_migrated_v3 INTEGER DEFAULT 1")
+            print("🔄 Обнулены зарплаты у безработных (миграция v3)")
 
 
 def create_user(user_id, name):
