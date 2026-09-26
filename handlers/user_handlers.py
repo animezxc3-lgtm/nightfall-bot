@@ -13,11 +13,21 @@ from relationships import (
     get_parents,
     get_family_surname,
 )
+from jobs.professions import PROFESSIONS, get_level_name
 
 
 def _profile_link(user_id, fallback='Пользователь'):
     name = get_display_name(user_id) or fallback
     return f'[id{user_id}|{name}]'
+
+
+def _format_job(job_key, job_level):
+    """Возвращает строку вида 'Шлюха | Элитная Путана' или 'Отсутствует'."""
+    if not job_key or job_key not in PROFESSIONS:
+        return 'Отсутствует'
+    job_name = PROFESSIONS[job_key]['name']
+    level_name = get_level_name(job_key, job_level or 0)
+    return f'{job_name} | {level_name}'
 
 
 def get_profile_data(user_id, peer_id=None):
@@ -40,16 +50,17 @@ def get_profile_data(user_id, peer_id=None):
     uid = u[0]
     name = u[1]
     nick = u[2]
-    power = u[3]
     coins = u[4]
-    job = u[5]
-    salary = u[6]
+    job_key = u[5]
+    job_level = u[17] or 0
     housing = u[8]
     car = u[9]
     phone = u[10]
 
     # Индекс 21 = profile_image
     profile_image = u[21]
+
+    job_display = _format_job(job_key, job_level)
 
     # --------------------------------------------------------
     # Дата появления
@@ -128,10 +139,6 @@ def get_profile_data(user_id, peer_id=None):
         )
     )
 
-    power_rank = get_power_rank(
-        power
-    )
-
     # --------------------------------------------------------
     # Текст профиля
     # --------------------------------------------------------
@@ -139,10 +146,8 @@ def get_profile_data(user_id, peer_id=None):
     lines = [
         f'👤 {_profile_link(user_id, display)}',
         f'🔒 Права: {rights_display}',
-        f'⚡ Сила Гиаса: {power} // {power_rank}',
         f'🪙 Монеты: {coins}',
-        f'💼 Работа: {job}',
-        f'💰 Зарплата: {salary} 🪙',
+        f'💼 Работа: {job_display}',
         f'❤️ Партнёр: {_profile_link(partner) if partner else "Нет"}',
         f'👪 Родителей: {len(parents)}',
         f'🧒 Детей: {len(children)}/5',
@@ -155,11 +160,6 @@ def get_profile_data(user_id, peer_id=None):
 
     # --------------------------------------------------------
     # АВАТАР
-    #
-    # ВАЖНО:
-    # НЕ добавляем photo-... в текст.
-    #
-    # Он будет передан VK API как attachment.
     # --------------------------------------------------------
 
     attachment = None
@@ -177,17 +177,7 @@ def get_profile_data(user_id, peer_id=None):
 
 
 def get_profile(user_id, peer_id=None):
-    """
-    Совместимая старая функция.
-
-    Возвращает только текст.
-    """
-
-    text, _ = get_profile_data(
-        user_id,
-        peer_id
-    )
-
+    text, _ = get_profile_data(user_id, peer_id)
     return text
 
 
@@ -210,7 +200,6 @@ def get_balance(user_id, vk=None):
 
     return (
         f'👤 {link}\n'
-        f'⚡ Сила Гиаса: {u[3]}\n'
         f'🪙 Монеты: {u[4]}'
     )
 

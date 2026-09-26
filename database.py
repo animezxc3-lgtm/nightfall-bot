@@ -51,7 +51,7 @@ def migrate_database():
             nickname TEXT DEFAULT '',
             soul_gems INTEGER DEFAULT 0,
             coins INTEGER DEFAULT 100,
-            job TEXT DEFAULT 'Безработный',
+            job TEXT DEFAULT 'Отсутствует',
             salary INTEGER DEFAULT 0,
             work_days INTEGER DEFAULT 0,
             housing TEXT DEFAULT 'Отсутствует',
@@ -145,6 +145,14 @@ def migrate_database():
             user_id INTEGER NOT NULL,
             level INTEGER NOT NULL,
             PRIMARY KEY(peer_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_weekly_message_totals (
+            peer_id INTEGER NOT NULL,
+            week_start TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            count INTEGER DEFAULT 0,
+            PRIMARY KEY(peer_id, week_start, user_id)
         );
 
         CREATE TABLE IF NOT EXISTS chat_members (
@@ -248,6 +256,12 @@ def migrate_database():
         if "invited_by" not in mcols:
             c.execute("ALTER TABLE chat_members ADD COLUMN invited_by INTEGER")
 
+        # Одноразовое обнуление работ при переходе на новую систему профессий.
+        if "job_migrated_v2" not in cols:
+            c.execute("UPDATE users SET job='Отсутствует', job_level=0, job_exp=0, job_last_work=NULL")
+            c.execute("ALTER TABLE users ADD COLUMN job_migrated_v2 INTEGER DEFAULT 1")
+            print("🔄 Обнулены работы у всех пользователей (миграция v2)")
+
 
 def create_user(user_id, name):
     with db_cursor(True) as (_, c):
@@ -285,11 +299,9 @@ def get_user(user_id):
 # ============ ТВИНКИ ============
 
 def add_twink(owner_id, twink_id):
-    """Привязывает твинка к владельцу. Возвращает True/False."""
     if owner_id == twink_id:
         return False
     with db_cursor(True) as (_, c):
-        # Проверка: твинк уже привязан?
         r = c.execute("SELECT owner_id FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
         if r:
             return False
@@ -306,14 +318,12 @@ def remove_twink(twink_id):
 
 
 def get_owner(twink_id):
-    """Возвращает owner_id, если user — твинк, иначе None."""
     with db_cursor() as (_, c):
         r = c.execute("SELECT owner_id FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
         return r[0] if r else None
 
 
 def get_twinks(owner_id):
-    """Возвращает список twink_id для указанного владельца."""
     with db_cursor() as (_, c):
         c.execute("SELECT twink_id FROM twinks WHERE owner_id=? ORDER BY added_at", (owner_id,))
         return [r[0] for r in c.fetchall()]
@@ -328,8 +338,6 @@ def is_twink(twink_id):
 # ============ ПОИСК БЕСЕДЫ ПО НОМЕРУ ============
 
 def find_chats_by_number(vk, number):
-    """Ищет беседы, в названии которых в конце стоит указанное число/строка.
-    Возвращает список peer_id."""
     import re as _re
     chats = get_all_chats()
     if not chats:
@@ -1004,17 +1012,6 @@ def get_power(user_id):
 def update_power(user_id, amount):
     with db_cursor(True) as (_, c):
         c.execute("UPDATE users SET soul_gems=soul_gems+? WHERE user_id=?", (amount, user_id))
-
-
-def debit_power(user_id, amount):
-    if amount <= 0:
-        return False
-    with db_cursor(True) as (_, c):
-        c.execute(
-            "UPDATE users SET soul_gems=soul_gems-? WHERE user_id=? AND soul_gems>=?",
-            (amount, user_id, amount)
-        )
-        return c.rowcount == 1
 
 
 def transfer_power(sender, target, amount):
