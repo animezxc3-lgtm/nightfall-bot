@@ -364,7 +364,17 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if key == 'пред':
             _ensure_profile(vk, target)
             n = add_warning(target, peer_id, True)
-            _send(vk, peer_id, f'выдал предупреждение {_user_link(vk, target)}. Теперь у него {n}/3.')
+
+            if n >= 3:
+                add_kick_event(target, peer_id, user_id)
+                try:
+                    vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
+                except Exception:
+                    pass
+                _send(vk, peer_id, f'выдал предупреждение {_user_link(vk, target)}. Теперь у него 3/3. {_user_link(vk, target)} исключён из беседы.')
+            else:
+                _send(vk, peer_id, f'выдал предупреждение {_user_link(vk, target)}. Теперь у него {n}/3.')
+
             return True
 
         if key == 'анпред':
