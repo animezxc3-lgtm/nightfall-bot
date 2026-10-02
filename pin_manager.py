@@ -729,33 +729,33 @@ def update_pin_in_chat(vk, peer_id, notify=False):
 # ============================================================
 
 def update_all_pins(vk):
-    """
-    Проверяет и обновляет закрепы всех известных бесед.
-    Роли 5–6 должны обновлять закрепы всех бесед.
-    """
+    """Обновляет закрепы ТОЛЬКО в беседах с числом в названии."""
+    import re as _re
+
+    chats = get_all_chats()
+    if not chats:
+        return []
+
+    # Собираем названия
+    ids = [p for p, _ in chats]
+    names = {}
+    try:
+        data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
+        for x in data:
+            pid = int(x.get('peer', {}).get('id'))
+            names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
+    except Exception as e:
+        print(f'Не удалось получить названия: {e}')
 
     results = []
-
-    for peer_id, _ in get_all_chats():
-
+    for peer_id, _ in chats:
         if peer_id == APPLICATIONS_PEER_ID:
             continue
-
-        if is_chat_hidden(peer_id):
+        title = names.get(peer_id, '')
+        if not _re.search(r'\d+\s*$', title):
             continue
-
-        result = refresh_pin_if_exists(
-            vk,
-            peer_id
-        )
-
-        results.append(
-            (
-                peer_id,
-                result[1]
-            )
-        )
-
+        result = refresh_pin_if_exists(vk, peer_id)
+        results.append((peer_id, result[1]))
     return results
 
 

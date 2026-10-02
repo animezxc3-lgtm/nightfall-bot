@@ -19,11 +19,54 @@ COMMAND_MIN_LEVEL = {
     'админы': 1, 'проверить': 2, 'снять': 5, 'изменить приветствие': 4, 'рассылка': 5, 'приветствие': 4,
     'переключить мут': 5, 'переключить чистку': 5, 'переключить казино': 5, 'переключить дуэль': 5,
     'переключить рассылку': 5,
-    'скрыть беседу': 5, 'показать беседу': 5,
     'чс адм': 5, 'убрать чс адм': 5,
     'беседа': 1, 'беседы': 1,
     'выдать права': 5, 'аватар': 4,
 }
+
+#====================================
+#ФИЛЬТРАЦИЯ
+#====================================
+
+def _has_number_in_title(title):
+    """True, если название беседы оканчивается числом."""
+    if not title:
+        return False
+    return bool(re.search(r'\d+\s*$', title.strip()))
+
+
+def _get_numbered_chats(vk):
+    """Возвращает список (peer_id, cleanup_enabled, title) только тех бесед,
+    у которых в названии есть число. Отсортировано по числу."""
+    chats = get_all_chats()
+    if not chats:
+        return []
+    ids = [p for p, _ in chats]
+    names = {}
+    try:
+        data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
+        for x in data:
+            pid = int(x.get('peer', {}).get('id'))
+            title = (x.get('chat_settings', {}).get('title') or '').strip()
+            names[pid] = title
+    except Exception as e:
+        print(f'Не удалось получить названия бесед: {e}')
+
+    result = []
+    for pid, cleanup in chats:
+        title = names.get(pid, '')
+        if _has_number_in_title(title):
+            result.append((pid, cleanup, title))
+
+    def sort_key(item):
+        _, _, title = item
+        m = re.search(r'^(.*?)(\d+)\s*$', title)
+        if m:
+            return (m.group(1).strip().lower(), int(m.group(2)))
+        return (title.lower(), 0)
+
+    result.sort(key=sort_key)
+    return result
 
 
 # ============================================================
@@ -183,8 +226,8 @@ def _fmt_date(s):
 # ============================================================
 
 def _get_user_chats(vk, target, current_peer=None):
-    from database import get_all_chats, is_chat_hidden
-
+    """Возвращает названия бесед (только с числом), в которых состоит пользователь."""
+    chats = _get_numbered_chats(vk)
     titles = []
     seen = set()
 
@@ -192,29 +235,25 @@ def _get_user_chats(vk, target, current_peer=None):
         try:
             data = vk.messages.getConversationsById(peer_ids=current_peer).get('items', [])
             if data:
-                t = data[0].get('chat_settings', {}).get('title') or f'Беседа {current_peer - 2000000000}'
-                titles.append(t)
-                seen.add(t)
+                title = data[0].get('chat_settings', {}).get('title') or ''
+                if _has_number_in_title(title):
+                    titles.append(title)
+                    seen.add(title)
         except Exception:
             pass
 
-    for peer, _ in get_all_chats():
+    for peer, _, title in chats:
         if peer == current_peer:
             continue
         if peer == APPLICATIONS_PEER_ID:
             continue
-        if is_chat_hidden(peer):
+        if title in seen:
             continue
         try:
             members = vk.messages.getConversationMembers(peer_id=peer).get('items', [])
             if any(m.get('member_id') == target for m in members):
-                data = vk.messages.getConversationsById(peer_ids=peer).get('items', [])
-                title = f'Беседа {peer - 2000000000}'
-                if data:
-                    title = data[0].get('chat_settings', {}).get('title') or title
-                if title not in seen:
-                    titles.append(title)
-                    seen.add(title)
+                titles.append(title)
+                seen.add(title)
         except Exception:
             continue
 
@@ -684,20 +723,6 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         return True
 
     # ========================================================
-    # СКРЫТЬ / ПОКАЗАТЬ
-    # ========================================================
-
-    if key == 'скрыть беседу':
-        hide_chat(peer_id)
-        _send(vk, peer_id, '🙈 Эта беседа скрыта из списка `лл беседы`.', actor_inline=False)
-        return True
-
-    if key == 'показать беседу':
-        unhide_chat(peer_id)
-        _send(vk, peer_id, '👁 Эта беседа снова видна в списке `лл беседы`.', actor_inline=False)
-        return True
-
-    # ========================================================
     # БЕСЕДА / БЕСЕДЫ
     # ========================================================
 
@@ -718,36 +743,12 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         ), actor_inline=False)
         return True
 
-    if key == 'беседы':
-        chats = get_all_chats()
-        names = {}
-        if chats:
-            try:
-                ids = [p for p, _ in chats]
-                data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
-                names = {
-                    int(x.get('peer', {}).get('id')): (
-                        x.get('chat_settings', {}).get('title') or f'Беседа {x.get("peer", {}).get("local_id", "")}'
-                    )
-                    for x in data
-                }
-            except Exception:
-                pass
+        if key == 'беседы':
+          chats = _get_numbered_chats(vk)
 
-        def sort_key(item):
-            p, _ = item
-            title = names.get(p, f'Беседа {p - 2000000000 if p > 2000000000 else p}')
-            m = re.match(r'^(.*?)(\d+)\s*$', title.strip())
-            if m:
-                return (m.group(1).strip().lower(), int(m.group(2)))
-            return (title.strip().lower(), 0)
-
-        chats = sorted(chats, key=sort_key)
-
-        lines = ['💬 Активность бесед']
-        for i, (p, _) in enumerate(chats, 1):
+          lines = ['💬 Активность бесед']
+          for i, (p, _, title) in enumerate(chats, 1):
             a = get_chat_activity(p)
-            title = names.get(p, f'Беседа {p - 2000000000 if p > 2000000000 else p}')
             lines.extend([
                 f'{i}. {title}',
                 f'День: {a["today"]}',
@@ -756,9 +757,9 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 f'Всё время: {a["total"]}',
                 '────────────────────'
             ])
-        if chats:
+          if chats:
             lines.pop()
-        _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
-        return True
+          _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
+          return True
 
     return True

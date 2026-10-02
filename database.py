@@ -256,15 +256,6 @@ def migrate_database():
         if "invited_by" not in mcols:
             c.execute("ALTER TABLE chat_members ADD COLUMN invited_by INTEGER")
 
-        # Одноразовое обнуление работ при переходе на новую систему профессий.
-        if "job_migrated_v2" not in cols:
-            c.execute("UPDATE users SET job='Отсутствует', job_level=0, job_exp=0, job_last_work=NULL")
-            c.execute("ALTER TABLE users ADD COLUMN job_migrated_v2 INTEGER DEFAULT 1")
-            print("🔄 Обнулены работы у всех пользователей (миграция v2)")
-        if "job_migrated_v3" not in cols:
-            c.execute("UPDATE users SET salary=0 WHERE job='Отсутствует'")
-            c.execute("ALTER TABLE users ADD COLUMN job_migrated_v3 INTEGER DEFAULT 1")
-            print("🔄 Обнулены зарплаты у безработных (миграция v3)")
 
 
 def create_user(user_id, name):
@@ -609,7 +600,6 @@ def get_all_chats():
     with db_cursor() as (_, c):
         c.execute("""
             SELECT peer_id, cleanup_enabled FROM chat_settings
-            WHERE peer_id NOT IN (SELECT peer_id FROM hidden_chats)
             ORDER BY peer_id
         """)
         return c.fetchall()
@@ -619,7 +609,7 @@ def get_broadcast_chats():
     with db_cursor() as (_, c):
         c.execute("""
             SELECT peer_id FROM chat_settings
-            WHERE broadcast_enabled=1 AND peer_id NOT IN (SELECT peer_id FROM hidden_chats)
+            WHERE broadcast_enabled=1
             ORDER BY peer_id
         """)
         return [row[0] for row in c.fetchall()]
@@ -1269,3 +1259,9 @@ def set_salary(user_id, amount):
 def increment_work_days(user_id):
     with db_cursor(True) as (_, c):
         c.execute("UPDATE users SET work_days=work_days+1 WHERE user_id=?", (user_id,))
+
+def get_numbered_chats():
+    """Возвращает только беседы, у которых в названии есть число.
+    Требует VK-объект для получения названий, поэтому функция
+    принимает vk и использует его."""
+    pass  # см. admin_commands._get_numbered_chats

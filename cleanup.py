@@ -23,8 +23,26 @@ def previous_week_period(now=None):
 def run_cleanup(vk, creator_id, get_admin_level):
     start_date, end_date = previous_week_period()
     results=[]
-    for peer_id, enabled in get_all_chats():
+    chats = get_all_chats()
+    if chats:
+        ids = [p for p, _ in chats]
+        names = {}
+        try:
+            data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
+            for x in data:
+                pid = int(x.get('peer', {}).get('id'))
+                names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
+        except Exception:
+            pass
+    else:
+        names = {}
+
+    import re as _re
+    for peer_id, enabled in chats:
         if not enabled:
+            continue
+        title = names.get(peer_id, '')
+        if not _re.search(r'\d+\s*$', title):
             continue
         try:
             members = vk.messages.getConversationMembers(peer_id=peer_id).get("items", [])
