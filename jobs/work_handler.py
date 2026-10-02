@@ -37,12 +37,7 @@ def work(user_id, *_):
     update_job_field(user_id, 'level', new_level)
     update_job_field(user_id, 'last_work', today)
 
-    from response_context import get_user_id
-    from relationships import get_display_name
-
-    actor = get_user_id()
-    name = get_display_name(actor) or 'Пользователь'
-    return f'[id{actor}|{name}] отработал рабочий день.'
+    return 'отработал рабочий день.'
 
 
 def hire(user_id, profession_key, *_):

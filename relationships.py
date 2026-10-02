@@ -8,7 +8,6 @@ def profile_link(uid):
     return f'https://vk.com/id{uid} ({name})'
 
 def parse_target_id(text):
-    """Универсальный парсер ID из упоминания, ссылки, @username или просто числа."""
     if not text:
         return None
     text = str(text).strip()
@@ -50,7 +49,7 @@ def get_parents(uid):
 def start_relationship(uid,target,vk=None):
     if not target or target==uid:return False,'Нельзя начать отношения с самим собой.'
     if get_partner_id(uid) or get_partner_id(target):return False,'Один из пользователей уже состоит в отношениях.'
-    create_relationship_proposal(target,uid); return True,f'❤️ {profile_link(uid)} предлагает тебе начать отношения!'
+    create_relationship_proposal(target,uid); return True,'❤️ предлагает тебе начать отношения!'
 
 def accept_relationship(target):
     p=get_relationship_proposal(target)
@@ -77,7 +76,7 @@ def propose_marriage(uid,target,surname):
     r=_row(uid)
     if r and r[1]:return False,'Вы уже состоите в браке.'
     if not 1<=len(surname)<=30:return False,'Фамилия должна быть от 1 до 30 символов.'
-    create_marriage_proposal(target,uid,surname); return True,f'💍 {profile_link(uid)} делает тебе предложение руки и сердца!'
+    create_marriage_proposal(target,uid,surname); return True,'💍 делает тебе предложение руки и сердца!'
 
 def accept_marriage(target):
     p=get_marriage_proposal(target)
@@ -97,7 +96,7 @@ def adopt(parent,child,vk=None):
     if len(get_children(parent))>=MAX_CHILDREN:return False,'В семье уже 5 детей.'
     parents=get_parents(child)
     if len(parents)>=2:return False,'У данного пользователя уже есть родители.'
-    create_family_proposal(child,parent,'ребёнок'); return True,f'👪 {profile_link(parent)} предлагает тебе стать членом семьи.'
+    create_family_proposal(child,parent,'ребёнок'); return True,'👪 предлагает тебе стать членом семьи.'
 
 def accept_family_addition(child):
     p=get_family_proposal(child)
