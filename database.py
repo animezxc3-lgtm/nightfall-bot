@@ -256,6 +256,10 @@ def migrate_database():
         if "invited_by" not in mcols:
             c.execute("ALTER TABLE chat_members ADD COLUMN invited_by INTEGER")
 
+        if "job_migrated_v2" not in cols:
+            c.execute("UPDATE users SET job='Отсутствует', salary=0, job_level=0, job_exp=0, job_last_work=NULL")
+            c.execute("ALTER TABLE users ADD COLUMN job_migrated_v2 INTEGER DEFAULT 1")
+            print("🔄 Обнулены работы у всех пользователей (миграция v2)")
 
 
 def create_user(user_id, name):
@@ -1090,7 +1094,7 @@ def has_active_duel(user_id):
         return r is not None
 
 
-# ============ СКРЫТЫЕ БЕСЕДЫ ============
+# ============ СКРЫТЫЕ БЕСЕДЫ (не используется) ============
 
 def hide_chat(peer_id):
     with db_cursor(True) as (_, c):
@@ -1259,9 +1263,3 @@ def set_salary(user_id, amount):
 def increment_work_days(user_id):
     with db_cursor(True) as (_, c):
         c.execute("UPDATE users SET work_days=work_days+1 WHERE user_id=?", (user_id,))
-
-def get_numbered_chats():
-    """Возвращает только беседы, у которых в названии есть число.
-    Требует VK-объект для получения названий, поэтому функция
-    принимает vk и использует его."""
-    pass  # см. admin_commands._get_numbered_chats
