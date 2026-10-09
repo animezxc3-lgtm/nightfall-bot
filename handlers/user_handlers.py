@@ -9,9 +9,8 @@ from database import (
 from relationships import (
     get_display_name,
     get_partner_id,
-    get_children,
-    get_parents,
     get_family_surname,
+    get_days_in_relationship,
 )
 from jobs.professions import PROFESSIONS, get_level_name
 
@@ -68,8 +67,8 @@ def get_profile_data(user_id, peer_id=None):
         join_date = '—'
 
     partner = get_partner_id(user_id)
-    parents = get_parents(user_id)
-    children = get_children(user_id)
+    days = get_days_in_relationship(user_id) if partner else None
+    days_line = str(days) if days is not None else '—'
 
     from admin_commands import get_admin_level, ROLE_NAMES
 
@@ -82,17 +81,16 @@ def get_profile_data(user_id, peer_id=None):
 
     lines = [
         f'👤 {_profile_link(user_id, display)}',
-        f'🔒 Права: {rights_display}',
         f'⚡ Сила Гиаса: {power} // {power_rank}',
         f'🪙 Монеты: {coins}',
         f'💼 Работа: {job_display}',
         f'❤️ Партнёр: {_profile_link(partner) if partner else "Нет"}',
-        f'👪 Родителей: {len(parents)}',
-        f'🧒 Детей: {len(children)}/5',
+        f'❤️ Дней в отношениях: {days_line}',
         f'🏠 Жильё: {housing}',
         f'🚗 Машина: {car}',
         f'📱 Телефон: {phone}',
         f'⚠️ Предупреждения: {warning_count}/3',
+        f'🔒 Права: {rights_display}',
         f'📆 Дата появления: {join_date}',
     ]
 
