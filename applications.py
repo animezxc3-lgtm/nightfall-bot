@@ -75,8 +75,10 @@ def validate_answer(step, text):
 
 
 def _timeout_expired(app):
+    if not app or not app.get('updated_at'):
+        return False
     try:
-        updated = datetime.strptime(app['updated_at'], "%Y-%m-%d %H:%M:%S")
+        updated = datetime.strptime(app['updated_at'][:19], "%Y-%m-%d %H:%M:%S")
     except Exception:
         return False
     return datetime.now() - updated > timedelta(minutes=APPLICATION_TIMEOUT_MINUTES)
@@ -92,6 +94,7 @@ def _vk_name(vk, uid):
 
 def start_application(user_id, vk):
     app = get_application(user_id)
+
     if app and app['state'] == 'in_progress':
         if not _timeout_expired(app):
             return 'У тебя уже есть активная заявка. Продолжай отвечать на вопросы или напиши `лл отмена`.'
@@ -112,12 +115,14 @@ def start_application(user_id, vk):
 
     if get_global_role(user_id) > 0:
         return 'Ты уже состоишь в администрации проекта.'
+
     with db_cursor() as (_, c):
         r = c.execute("SELECT 1 FROM admin_chat_rights WHERE user_id=? AND level>0 LIMIT 1", (user_id,)).fetchone()
     if r:
-        return
+        return 'Ты уже состоишь в администрации одной из бесед.'
 
     upsert_application(user_id, 'in_progress', 0, [])
+
     return (
         '📋 Заявка на администратора\n\n'
         'Я задам 10 вопросов. Отвечай на каждый отдельным сообщением.\n\n'
