@@ -3,7 +3,7 @@ from config import CREATOR_ID,ALLOWED_IN_DM
 from database import *
 from admin_commands import handle_admin_command
 from games import casino
-from jobs.work_handler import work,hire,fire
+from jobs.work_handler import work,hire,fire,job_stats
 from handlers.user_handlers import (
     get_profile,
     get_profile_data,
@@ -349,6 +349,36 @@ def handle_command(command,user_id,peer_id,vk,text):
                 _send(vk,peer_id,rp_text,attachment=rp_photo)
         return
 
+        # РАБОТА (статистика)
+    if command == 'работа' or command.startswith('работа '):
+        rest = command[len('работа'):].strip() if command != 'работа' else ''
+        target = _target(rest) if rest else user_id
+        print(f'🔎 РАБОТА: rest="{rest}", target={target}')
+
+        if not target or not get_user(target):
+            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
+            return
+
+        stats = job_stats(target, viewer_id=user_id)
+
+        if stats is None:
+            _send(vk, peer_id, f'У {_user_link(vk, target)} нет работы.', exclude_actor=True)
+            return
+
+        if isinstance(stats, str):
+            _send(vk, peer_id, stats, exclude_actor=True)
+            return
+
+        text_work = (
+            f'Статистика работы {_user_link(vk, target)}\n'
+            f'Работа: {stats["job_name"]}\n'
+            f'Должность: {stats["level_name"]}\n'
+            f'Зарплата: {stats["salary"]:,} 🪙\n'
+            f'Отработано дней: {stats["days"]}'
+        )
+        _send(vk, peer_id, text_work, exclude_actor=True)
+        return
+
     # Property
     if command=='магазин':
         from keyboards import SHOP_MENU
@@ -373,9 +403,12 @@ def handle_command(command,user_id,peer_id,vk,text):
         _send(vk,peer_id,f'Имущество продано. Получено: {refund:,} 🪙.'); return
 
     # Work
-    if command=='работать':
-        result=work(user_id)
-        _send(vk,peer_id,result); return
+    if command == 'работать':
+        text, promoted_text = work(user_id)
+        _send(vk, peer_id, text)
+        if promoted_text:
+            _send(vk, peer_id, promoted_text)
+        return
     if command=='устроиться':
         from keyboards import profession_keyboard
         _send(vk,peer_id,'💼 Выберите профессию:',profession_keyboard(),exclude_actor=True); return

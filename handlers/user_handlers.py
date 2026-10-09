@@ -41,7 +41,6 @@ def get_profile_data(user_id, peer_id=None):
     power = u[3]
     coins = u[4]
     job_key = u[5]
-    salary = u[6]
     housing = u[8]
     car = u[9]
     phone = u[10]
@@ -87,7 +86,6 @@ def get_profile_data(user_id, peer_id=None):
         f'⚡ Сила Гиаса: {power} // {power_rank}',
         f'🪙 Монеты: {coins}',
         f'💼 Работа: {job_display}',
-        f'💰 Зарплата: {salary} 🪙',
         f'❤️ Партнёр: {_profile_link(partner) if partner else "Нет"}',
         f'👪 Родителей: {len(parents)}',
         f'🧒 Детей: {len(children)}/5',
