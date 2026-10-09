@@ -42,6 +42,16 @@ def get_db():
     return _connect()
 
 
+def _week_start(d):
+    """Понедельник текущей недели."""
+    return d - timedelta(days=d.weekday())
+
+
+def _month_start(d):
+    """Первое число текущего месяца."""
+    return d.replace(day=1)
+
+
 def migrate_database():
     with db_cursor(True) as (_, c):
         c.executescript("""
@@ -554,10 +564,17 @@ def _sum(c, table, where, args):
 
 
 def get_messages_stats(user_id):
+    """
+    today — сегодня.
+    week — с понедельника текущей недели.
+    month — с 1-го числа текущего месяца.
+    total — за всё время.
+    """
     from zoneinfo import ZoneInfo
-    today = datetime.now(ZoneInfo('Europe/Moscow')).date()
-    week = today - timedelta(days=6)
-    month = today - timedelta(days=29)
+    moscow = ZoneInfo('Europe/Moscow')
+    today = datetime.now(moscow).date()
+    week_start = _week_start(today)
+    month_start = _month_start(today)
 
     with db_cursor() as (_, c):
         c.execute("SELECT COALESCE(messages_total,0) FROM users WHERE user_id=?", (user_id,))
@@ -566,27 +583,34 @@ def get_messages_stats(user_id):
             'today': _sum(c, 'messages_stats', 'user_id=? AND date=?',
                            (user_id, today.isoformat())),
             'week': _sum(c, 'messages_stats', 'user_id=? AND date>=?',
-                         (user_id, week.isoformat())),
+                         (user_id, week_start.isoformat())),
             'month': _sum(c, 'messages_stats', 'user_id=? AND date>=?',
-                          (user_id, month.isoformat())),
+                          (user_id, month_start.isoformat())),
             'total': int(total[0]) if total else 0
         }
 
 
 def get_chat_activity(peer_id):
+    """
+    today — сегодня.
+    week — с понедельника текущей недели.
+    month — с 1-го числа текущего месяца.
+    total — за всё время.
+    """
     from zoneinfo import ZoneInfo
-    today = datetime.now(ZoneInfo('Europe/Moscow')).date()
-    week = today - timedelta(days=6)
-    month = today - timedelta(days=29)
+    moscow = ZoneInfo('Europe/Moscow')
+    today = datetime.now(moscow).date()
+    week_start = _week_start(today)
+    month_start = _month_start(today)
 
     with db_cursor() as (_, c):
         return {
             'today': _sum(c, 'chat_message_stats', 'peer_id=? AND date=?',
                           (peer_id, today.isoformat())),
             'week': _sum(c, 'chat_message_stats', 'peer_id=? AND date>=?',
-                         (peer_id, week.isoformat())),
+                         (peer_id, week_start.isoformat())),
             'month': _sum(c, 'chat_message_stats', 'peer_id=? AND date>=?',
-                          (peer_id, month.isoformat())),
+                          (peer_id, month_start.isoformat())),
             'total': _sum(c, 'chat_message_stats', 'peer_id=?', (peer_id,))
         }
 
@@ -796,9 +820,10 @@ def clear_warnings(user_id, peer_id=None, is_admin_warning=True):
 
 def get_warning_stats(user_id, is_admin_warning=False, peer_id=None):
     from zoneinfo import ZoneInfo
-    today = datetime.now(ZoneInfo('Europe/Moscow')).date()
-    week = today - timedelta(days=6)
-    month = today - timedelta(days=29)
+    moscow = ZoneInfo('Europe/Moscow')
+    today = datetime.now(moscow).date()
+    week_start = _week_start(today)
+    month_start = _month_start(today)
 
     with db_cursor() as (_, c):
         params = [user_id, int(is_admin_warning)]
@@ -807,8 +832,8 @@ def get_warning_stats(user_id, is_admin_warning=False, peer_id=None):
             extra = ' AND peer_id=?'
             params.append(peer_id)
         dparams = params + [today.isoformat()]
-        wparams = params + [week.isoformat()]
-        mparams = params + [month.isoformat()]
+        wparams = params + [week_start.isoformat()]
+        mparams = params + [month_start.isoformat()]
         q = f"user_id=? AND is_admin_warning=?{extra}"
         d = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q} AND date(created_at)=?", dparams).fetchone()[0]
         w = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q} AND date(created_at)>=?", wparams).fetchone()[0]
@@ -827,14 +852,15 @@ def add_kick_event(user_id, peer_id, kicked_by):
 
 def get_kick_stats(user_id):
     from zoneinfo import ZoneInfo
-    today = datetime.now(ZoneInfo('Europe/Moscow')).date()
-    week = today - timedelta(days=6)
-    month = today - timedelta(days=29)
+    moscow = ZoneInfo('Europe/Moscow')
+    today = datetime.now(moscow).date()
+    week_start = _week_start(today)
+    month_start = _month_start(today)
 
     with db_cursor() as (_, c):
         d = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)=?", (user_id, today.isoformat())).fetchone()[0]
-        w = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)>=?", (user_id, week.isoformat())).fetchone()[0]
-        m = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)>=?", (user_id, month.isoformat())).fetchone()[0]
+        w = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)>=?", (user_id, week_start.isoformat())).fetchone()[0]
+        m = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)>=?", (user_id, month_start.isoformat())).fetchone()[0]
         t = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=?", (user_id,)).fetchone()[0]
         return {'today': int(d), 'week': int(w), 'month': int(m), 'total': int(t)}
 
