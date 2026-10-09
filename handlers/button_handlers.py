@@ -179,6 +179,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл расстаться\n'
             'лл поцеловаться\n'
             'лл обняться\n'
+            'лл семья [@user]\n'
             'лл создать брак @user <фамилия>\n'
             'лл развестись\n'
             'лл усыновить @user\n'
@@ -306,16 +307,8 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
     # ПРОФИЛЬ
     if cmd == 'profile':
         from handlers.user_handlers import get_profile_data
-
-        profile_text, profile_attachment = get_profile_data(
-            user_id,
-            peer_id
-        )
-
-        edit(
-            profile_text,
-            attachment=profile_attachment
-        )
+        profile_text, profile_attachment = get_profile_data(user_id, peer_id)
+        edit(profile_text, attachment=profile_attachment)
         return
 
     if cmd == 'balance':

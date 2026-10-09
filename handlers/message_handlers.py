@@ -12,7 +12,7 @@ from handlers.user_handlers import (
     get_activity,
 )
 from handlers.rp_handlers import handle_rp_command
-from relationships import parse_target_id,start_relationship,end_relationship,divorce,adopt,relinquish,leave_family,get_partner_id,get_display_name
+from relationships import parse_target_id,start_relationship,end_relationship,divorce,adopt,relinquish,leave_family,get_partner_id,get_display_name,get_family_stats
 from property_shop import buy_property,get_items
 from response_context import set_user, get_user_id, get_exclude_actor
 
@@ -59,27 +59,18 @@ def handle_command(command,user_id,peer_id,vk,text):
     if command == 'профиль' or command.startswith('профиль '):
         rest = command[len('профиль'):].strip() if command != 'профиль' else ''
         target = _target(rest) if rest else user_id
-        print(f'🔎 ПРОФИЛЬ: rest="{rest}", target={target}')
 
         if not target or not get_user(target):
             _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
             return
 
         profile_text, profile_attachment = get_profile_data(target, peer_id)
-
-        _send(
-            vk,
-            peer_id,
-            profile_text,
-            attachment=profile_attachment,
-            exclude_actor=True
-        )
+        _send(vk, peer_id, profile_text, attachment=profile_attachment, exclude_actor=True)
         return
 
     if command == 'баланс' or command.startswith('баланс '):
         rest = command[len('баланс'):].strip() if command != 'баланс' else ''
         target = _target(rest) if rest else user_id
-        print(f'🔎 БАЛАНС: rest="{rest}", target={target}')
 
         if not target or not get_user(target):
             _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
@@ -100,7 +91,6 @@ def handle_command(command,user_id,peer_id,vk,text):
     if command == 'активность' or command.startswith('активность '):
         rest = command[len('активность'):].strip() if command != 'активность' else ''
         target = _target(rest) if rest else user_id
-        print(f'🔎 АКТИВНОСТЬ: rest="{rest}", target={target}')
 
         if not target or not get_user(target):
             _send(vk, peer_id, 'Пользователь не найден.')
@@ -108,7 +98,7 @@ def handle_command(command,user_id,peer_id,vk,text):
         _send(vk, peer_id, get_activity(target))
         return
 
-    # === ТВИНКИ ===
+    # ТВИНКИ
     if command == 'твинк' or command.startswith('твинк '):
         parts = command.split(maxsplit=2)
         if len(parts) >= 2 and parts[1] == 'убрать':
@@ -172,12 +162,12 @@ def handle_command(command,user_id,peer_id,vk,text):
         _send(vk, peer_id, '\n'.join(lines), exclude_actor=True)
         return
 
-    # === ЗАЯВКА ===
+    # ЗАЯВКА
     if command == 'заявка':
         _send(vk, peer_id, '📩 Заявка подаётся в личные сообщения бота.\n\nНапиши боту в ЛС: `лл заявка`.')
         return
 
-    # === ЗАКРЕПЫ ===
+    # ЗАКРЕПЫ
     if command == 'установить закреп':
         from admin_commands import get_admin_level
         if get_admin_level(user_id, peer_id) < 4:
@@ -199,7 +189,7 @@ def handle_command(command,user_id,peer_id,vk,text):
         _send(vk, peer_id, f'Обновлено бесед: {ok} из {len(results)}.', exclude_actor=True)
         return
 
-    # === ДУЭЛЬ ===
+    # ДУЭЛЬ
     if command.startswith('дуэль'):
         if not get_feature(peer_id, 'дуэль'):
             _send(vk, peer_id, 'Дуэли в этой беседе запрещены', exclude_actor=True)
@@ -233,7 +223,7 @@ def handle_command(command,user_id,peer_id,vk,text):
         create_duel(user_id, opponent, peer_id, None)
         return
 
-    # === КАЗИНО ===
+    # КАЗИНО
     if command.startswith('деп'):
         if not get_feature(peer_id, 'казино'):
             _send(vk, peer_id, 'Казино в этой беседе запрещено.', exclude_actor=True)
@@ -276,6 +266,64 @@ def handle_command(command,user_id,peer_id,vk,text):
             _send(vk, peer_id, 'У вас недостаточно монет.', exclude_actor=True)
             return
         _send(vk,peer_id,f'Передано {amount:,} 🪙 пользователю {_user_link(vk,target)}.')
+        return
+
+    # РАБОТА (статистика)
+    if command == 'работа' or command.startswith('работа '):
+        rest = command[len('работа'):].strip() if command != 'работа' else ''
+        target = _target(rest) if rest else user_id
+
+        if not target or not get_user(target):
+            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
+            return
+
+        stats = job_stats(target, viewer_id=user_id)
+
+        if stats is None:
+            _send(vk, peer_id, f'У {_user_link(vk, target)} нет работы.', exclude_actor=True)
+            return
+
+        if isinstance(stats, str):
+            _send(vk, peer_id, stats, exclude_actor=True)
+            return
+
+        text_work = (
+            f'Статистика работы {_user_link(vk, target)}\n'
+            f'Работа: {stats["job_name"]}\n'
+            f'Должность: {stats["level_name"]}\n'
+            f'Зарплата: {stats["salary"]:,} 🪙\n'
+            f'Отработано дней: {stats["days"]}'
+        )
+        _send(vk, peer_id, text_work, exclude_actor=True)
+        return
+
+    # СЕМЬЯ (статистика)
+    if command == 'семья' or command.startswith('семья '):
+        rest = command[len('семья'):].strip() if command != 'семья' else ''
+        target = _target(rest) if rest else user_id
+
+        if not target or not get_user(target):
+            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
+            return
+
+        stats = get_family_stats(target)
+
+        def _fmt_users(ids):
+            if not ids:
+                return 'Нет'
+            return ', '.join(_user_link(vk, uid) for uid in ids)
+
+        partner_line = _user_link(vk, stats['partner']) if stats['partner'] else 'Нет'
+        days_line = str(stats['days']) if stats['days'] is not None else '—'
+
+        text_family = (
+            f'Статистика семьи {_user_link(vk, target)}\n'
+            f'Партнёр: {partner_line}\n'
+            f'Дней в отношениях: {days_line}\n'
+            f'Дети: {_fmt_users(stats["children"])}\n'
+            f'Родители: {_fmt_users(stats["parents"])}'
+        )
+        _send(vk, peer_id, text_family, exclude_actor=True)
         return
 
     # Relations
@@ -347,36 +395,6 @@ def handle_command(command,user_id,peer_id,vk,text):
             rp_text,rp_photo=result
             if rp_text:
                 _send(vk,peer_id,rp_text,attachment=rp_photo)
-        return
-
-        # РАБОТА (статистика)
-    if command == 'работа' or command.startswith('работа '):
-        rest = command[len('работа'):].strip() if command != 'работа' else ''
-        target = _target(rest) if rest else user_id
-        print(f'🔎 РАБОТА: rest="{rest}", target={target}')
-
-        if not target or not get_user(target):
-            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
-            return
-
-        stats = job_stats(target, viewer_id=user_id)
-
-        if stats is None:
-            _send(vk, peer_id, f'У {_user_link(vk, target)} нет работы.', exclude_actor=True)
-            return
-
-        if isinstance(stats, str):
-            _send(vk, peer_id, stats, exclude_actor=True)
-            return
-
-        text_work = (
-            f'Статистика работы {_user_link(vk, target)}\n'
-            f'Работа: {stats["job_name"]}\n'
-            f'Должность: {stats["level_name"]}\n'
-            f'Зарплата: {stats["salary"]:,} 🪙\n'
-            f'Отработано дней: {stats["days"]}'
-        )
-        _send(vk, peer_id, text_work, exclude_actor=True)
         return
 
     # Property

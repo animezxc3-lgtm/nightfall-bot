@@ -56,8 +56,11 @@ def accept_relationship(target):
     if not p:return 'Для тебя нет действующего предложения отношений.'
     proposer=p[0]
     if get_partner_id(target) or get_partner_id(proposer): delete_relationship_proposal(target); return 'Предложение больше недействительно.'
+    from datetime import datetime as _dt
+    now = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_,c):
-        c.execute('UPDATE relationships SET partner_id=? WHERE user_id=?',(target,proposer)); c.execute('UPDATE relationships SET partner_id=? WHERE user_id=?',(proposer,target))
+        c.execute('UPDATE relationships SET partner_id=?, relationship_since=? WHERE user_id=?',(target,now,proposer))
+        c.execute('UPDATE relationships SET partner_id=?, relationship_since=? WHERE user_id=?',(proposer,now,target))
     delete_relationship_proposal(target); return '❤️ Согласие принято! Теперь вы состоите в отношениях.'
 
 def reject_relationship(target):
@@ -68,7 +71,7 @@ def reject_relationship(target):
 def end_relationship(uid):
     partner=get_partner_id(uid)
     if not partner:return 'У тебя нет партнёра.'
-    with db_cursor(True) as (_,c): c.execute("UPDATE relationships SET partner_id=NULL,married=0,family_surname='' WHERE user_id IN (?,?)",(uid,partner))
+    with db_cursor(True) as (_,c): c.execute("UPDATE relationships SET partner_id=NULL,married=0,family_surname='',relationship_since=NULL WHERE user_id IN (?,?)",(uid,partner))
     return '💔 Вы больше не состоите в отношениях. Брак и фамилия семьи расторгнуты.'
 
 def propose_marriage(uid,target,surname):
@@ -123,3 +126,50 @@ def leave_family(uid):
 def relationship_status(uid,vk=None):
     p=get_partner_id(uid); r=_row(uid); married=bool(r and r[1]); surname=get_family_surname(uid); children=get_children(uid); parents=get_parents(uid)
     return f"❤️ Партнёр: {profile_link(p) if p else 'Нет'}\n💍 Брак: {'да' if married else 'нет'}\n👤 Фамилия семьи: {surname or 'не установлена'}\n👪 Родителей: {len(parents)}\n🧒 Детей: {len(children)}/{MAX_CHILDREN}"
+
+
+def get_relationship_since(uid):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT relationship_since FROM relationships WHERE user_id=?", (uid,)).fetchone()
+        return r[0] if r and r[0] else None
+
+
+def get_days_in_relationship(uid):
+    since = get_relationship_since(uid)
+    if not since:
+        return None
+    try:
+        from datetime import datetime as _dt
+        dt = _dt.strptime(since[:19], "%Y-%m-%d %H:%M:%S")
+        delta = _dt.now() - dt
+        return delta.days
+    except Exception:
+        return None
+
+
+def get_common_children(uid):
+    partner = get_partner_id(uid)
+    ids = set()
+    if partner:
+        for c in get_children(uid):
+            ids.add(c)
+        for c in get_children(partner):
+            ids.add(c)
+    else:
+        for c in get_children(uid):
+            ids.add(c)
+    return list(ids)
+
+
+def get_family_stats(uid, vk=None):
+    partner = get_partner_id(uid)
+    days = get_days_in_relationship(uid) if partner else None
+    children = get_common_children(uid)
+    parents = get_parents(uid)
+
+    return {
+        'partner': partner,
+        'days': days,
+        'children': children,
+        'parents': parents,
+    }

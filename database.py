@@ -43,12 +43,10 @@ def get_db():
 
 
 def _week_start(d):
-    """Понедельник текущей недели."""
     return d - timedelta(days=d.weekday())
 
 
 def _month_start(d):
-    """Первое число текущего месяца."""
     return d.replace(day=1)
 
 
@@ -113,7 +111,8 @@ def migrate_database():
             user_id INTEGER PRIMARY KEY,
             partner_id INTEGER,
             married INTEGER DEFAULT 0,
-            family_surname TEXT DEFAULT ''
+            family_surname TEXT DEFAULT '',
+            relationship_since TEXT
         );
 
         CREATE TABLE IF NOT EXISTS marriage_proposals (
@@ -270,6 +269,17 @@ def migrate_database():
             c.execute("UPDATE users SET job='Отсутствует', salary=0, job_level=0, job_exp=0, job_last_work=NULL")
             c.execute("ALTER TABLE users ADD COLUMN job_migrated_v2 INTEGER DEFAULT 1")
             print("🔄 Обнулены работы у всех пользователей (миграция v2)")
+
+        rcols = {row[1] for row in c.execute("PRAGMA table_info(relationships)").fetchall()}
+        if "relationship_since" not in rcols:
+            c.execute("ALTER TABLE relationships ADD COLUMN relationship_since TEXT")
+            # Всем существующим парам — сегодняшняя дата
+            c.execute("""
+                UPDATE relationships
+                SET relationship_since = CURRENT_TIMESTAMP
+                WHERE partner_id IS NOT NULL AND relationship_since IS NULL
+            """)
+            print("🔄 Существующим парам проставлена сегодняшняя дата (relationship_since)")
 
 
 def create_user(user_id, name):
@@ -564,12 +574,6 @@ def _sum(c, table, where, args):
 
 
 def get_messages_stats(user_id):
-    """
-    today — сегодня.
-    week — с понедельника текущей недели.
-    month — с 1-го числа текущего месяца.
-    total — за всё время.
-    """
     from zoneinfo import ZoneInfo
     moscow = ZoneInfo('Europe/Moscow')
     today = datetime.now(moscow).date()
@@ -591,12 +595,6 @@ def get_messages_stats(user_id):
 
 
 def get_chat_activity(peer_id):
-    """
-    today — сегодня.
-    week — с понедельника текущей недели.
-    month — с 1-го числа текущего месяца.
-    total — за всё время.
-    """
     from zoneinfo import ZoneInfo
     moscow = ZoneInfo('Europe/Moscow')
     today = datetime.now(moscow).date()
