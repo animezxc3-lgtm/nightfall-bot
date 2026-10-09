@@ -230,7 +230,8 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             '💼 КОМАНДЫ РАБОТЫ\n\n'
             'лл устроиться\n'
             'лл работать\n'
-            'лл уволиться',
+            'лл уволиться\n'
+            'лл работа [@user]',
             menu_keyboard(is_admin),
         )
         return
@@ -323,7 +324,14 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         return
 
     if cmd == 'work':
-        edit('💼 КОМАНДЫ РАБОТЫ\n\nлл устроиться\nлл работать\nлл уволиться', menu_keyboard(is_admin))
+        edit(
+            '💼 КОМАНДЫ РАБОТЫ\n\n'
+            'лл устроиться\n'
+            'лл работать\n'
+            'лл уволиться\n'
+            'лл работа [@user]',
+            menu_keyboard(is_admin),
+        )
         return
 
     if cmd == 'casino':
