@@ -399,7 +399,7 @@ def handle_command(command,user_id,peer_id,vk,text):
                 _send(vk,peer_id,rp_text,attachment=rp_photo)
         return
 
-    # РУЛЕТКА
+        # РУЛЕТКА
     if command.startswith('рулетка'):
         if not get_feature(peer_id, 'казино'):
             _send(vk, peer_id, 'Казино в этой беседе запрещено.', exclude_actor=True)
@@ -428,18 +428,19 @@ def handle_command(command,user_id,peer_id,vk,text):
         # Крутим
         idx, number, color = spin_wheel()
 
-        # Цвет на русском
         color_ru = {
             'red': 'Красное',
             'black': 'Чёрное',
-            'green': 'Зеро',
+            'green': 'Зелёное',
         }[color]
 
         # Множители
-        if color == 'green':
-            mult = 36
-        else:
+        if color == 'black':
+            mult = 0
+        elif color == 'red':
             mult = 2
+        else:  # green
+            mult = 5
 
         win_amount = bet * mult
         # Вычитаем ставку, добавляем выигрыш
@@ -453,16 +454,19 @@ def handle_command(command,user_id,peer_id,vk,text):
             print(f'Не удалось сгенерировать/загрузить колесо: {e}')
             attachment = None
 
+        balance = user[4] + win_amount - bet
+
         text_roulette = (
-            f'🎡 Выпало: {number} ({color_ru})\n'
-            f'💰 Выигрыш: {win_amount:,} 🪙\n'
-            f'📊 Баланс: {user[4] + win_amount - bet:,} 🪙'
+            f'{_user_link(vk, user_id)}\n'
+            f'Выпало: {number} — {color_ru}\n'
+            f'Множитель: х{mult}\n'
+            f'Выигрыш: {win_amount:,}'
         )
 
         if attachment:
-            _send(vk, peer_id, text_roulette, attachment=attachment)
+            _send(vk, peer_id, text_roulette, attachment=attachment, exclude_actor=True)
         else:
-            _send(vk, peer_id, text_roulette)
+            _send(vk, peer_id, text_roulette, exclude_actor=True)
         return
 
     # Property
