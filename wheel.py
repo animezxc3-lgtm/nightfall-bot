@@ -84,14 +84,14 @@ def draw_wheel(result_index):
         fill='#2c2c2c', outline='#f1c40f', width=3
     )
 
-    # Стрелка на победивший сектор
+        # Стрелка на победивший сектор (короткая, не закрывает число)
     mid_angle = math.radians(result_index * angle_per - 90 + angle_per / 2)
-    ex = cx + math.cos(mid_angle) * (radius - 5)
-    ey = cy + math.sin(mid_angle) * (radius - 5)
+    ex = cx + math.cos(mid_angle) * (radius - 100)
+    ey = cy + math.sin(mid_angle) * (radius - 100)
     draw.line([cx, cy, ex, ey], fill='#f1c40f', width=6)
 
-    # Кружок на конце стрелки
-    draw.ellipse([ex - 8, ey - 8, ex + 8, ey + 8], fill='#f1c40f')
+    # Кружок на конце стрелки (маленький)
+    draw.ellipse([ex - 6, ey - 6, ex + 6, ey + 6], fill='#f1c40f')
 
     img.save(cache_file)
     return str(cache_file)
