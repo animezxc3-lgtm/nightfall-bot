@@ -27,7 +27,7 @@ COLORS = {
     'green': '#27ae60',
 }
 
-CACHE_DIR = Path(__file__).resolve().parent / "data" / "wheels"
+CACHE_DIR = Path(__file__).resolve().parent / "data" / "wheels_v2"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
