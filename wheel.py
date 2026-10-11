@@ -48,8 +48,17 @@ def draw_wheel(result_index):
     Возвращает путь к PNG.
     """
     cache_file = CACHE_DIR / f"wheel_{result_index}.png"
-    if cache_file.exists():
+
+    # Если файл есть и он валидный — возвращаем
+    if cache_file.exists() and cache_file.stat().st_size > 1000:
         return str(cache_file)
+
+    # Если файл битый — удаляем
+    if cache_file.exists():
+        try:
+            cache_file.unlink()
+        except Exception:
+            pass
 
     size = 700
     img = Image.new('RGB', (size, size), '#0d0d0d')
@@ -77,23 +86,24 @@ def draw_wheel(result_index):
         ty = cy + math.sin(mid_angle) * (radius - 45)
         draw.text((tx, ty), str(number), fill='white', anchor='mm', font=font)
 
-    # Внутренний круг
     inner = radius - 90
     draw.ellipse(
         [cx - inner, cy - inner, cx + inner, cy + inner],
         fill='#2c2c2c', outline='#f1c40f', width=3
     )
 
-        # Стрелка на победивший сектор (короткая, не закрывает число)
+    # Стрелка — короткая, не закрывает число
     mid_angle = math.radians(result_index * angle_per - 90 + angle_per / 2)
     ex = cx + math.cos(mid_angle) * (radius - 100)
     ey = cy + math.sin(mid_angle) * (radius - 100)
     draw.line([cx, cy, ex, ey], fill='#f1c40f', width=6)
-
-    # Кружок на конце стрелки (маленький)
     draw.ellipse([ex - 6, ey - 6, ex + 6, ey + 6], fill='#f1c40f')
 
-    img.save(cache_file)
+    # Сохраняем во временный файл, потом переименовываем — атомарно
+    tmp_file = CACHE_DIR / f"wheel_{result_index}.tmp.png"
+    img.save(tmp_file)
+    tmp_file.replace(cache_file)
+
     return str(cache_file)
 
 
