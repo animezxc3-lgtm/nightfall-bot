@@ -3,6 +3,8 @@ from config import CREATOR_ID,ALLOWED_IN_DM
 from database import *
 from admin_commands import handle_admin_command
 from games import casino
+from wheel import spin_wheel, draw_wheel
+from vk_upload import upload_photo
 from jobs.work_handler import work,hire,fire,job_stats
 from handlers.user_handlers import (
     get_profile,
@@ -395,6 +397,72 @@ def handle_command(command,user_id,peer_id,vk,text):
             rp_text,rp_photo=result
             if rp_text:
                 _send(vk,peer_id,rp_text,attachment=rp_photo)
+        return
+
+    # РУЛЕТКА
+    if command.startswith('рулетка'):
+        if not get_feature(peer_id, 'казино'):
+            _send(vk, peer_id, 'Казино в этой беседе запрещено.', exclude_actor=True)
+            return
+
+        parts = command.split()
+        if len(parts) != 2:
+            return
+
+        try:
+            bet = int(parts[1])
+        except ValueError:
+            return
+
+        if bet < 1000:
+            _send(vk, peer_id, 'Минимальная ставка: 1 000 монет.', exclude_actor=True)
+            return
+
+        user = get_user(user_id)
+        if not user:
+            return
+        if bet > user[4]:
+            _send(vk, peer_id, 'Недостаточно монет.', exclude_actor=True)
+            return
+
+        # Крутим
+        idx, number, color = spin_wheel()
+
+        # Цвет на русском
+        color_ru = {
+            'red': 'Красное',
+            'black': 'Чёрное',
+            'green': 'Зеро',
+        }[color]
+
+        # Множители
+        if color == 'green':
+            mult = 36
+        else:
+            mult = 2
+
+        win_amount = bet * mult
+        # Вычитаем ставку, добавляем выигрыш
+        update_coins(user_id, win_amount - bet)
+
+        # Рисуем колесо
+        try:
+            photo_path = draw_wheel(idx)
+            attachment = upload_photo(vk, photo_path, peer_id)
+        except Exception as e:
+            print(f'Не удалось сгенерировать/загрузить колесо: {e}')
+            attachment = None
+
+        text_roulette = (
+            f'🎡 Выпало: {number} ({color_ru})\n'
+            f'💰 Выигрыш: {win_amount:,} 🪙\n'
+            f'📊 Баланс: {user[4] + win_amount - bet:,} 🪙'
+        )
+
+        if attachment:
+            _send(vk, peer_id, text_roulette, attachment=attachment)
+        else:
+            _send(vk, peer_id, text_roulette)
         return
 
     # Property

@@ -220,8 +220,9 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             '⚔️ Дуэли:\n'
             'лл дуэль @user\n\n'
             '🎰 Казино:\n'
-            'лл деп <сумма>\n\n'
-            '💡 Минимальная ставка в казино: 1 000 🪙',
+            'лл деп <сумма>\n'
+            'лл рулетка <сумма>\n\n'
+            '💡 Минимальная ставка: 1 000 🪙',
             menu_keyboard(is_admin),
         )
         return
