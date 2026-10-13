@@ -5,6 +5,7 @@ from admin_commands import handle_admin_command
 from games import casino
 from wheel import spin_wheel, draw_wheel
 from vk_upload import upload_photo
+from likes_handler import parse_wall_url, get_likes_page, PER_PAGE
 from jobs.work_handler import work,hire,fire,job_stats
 from handlers.user_handlers import (
     get_profile,
@@ -18,6 +19,7 @@ from relationships import parse_target_id,start_relationship,end_relationship,di
 from property_shop import buy_property,get_items
 from response_context import set_user, get_user_id, get_exclude_actor
 
+
 def _user_link(vk, user_id, fallback='Пользователь'):
     try:
         info=vk.users.get(user_ids=user_id)[0]
@@ -25,6 +27,7 @@ def _user_link(vk, user_id, fallback='Пользователь'):
     except Exception:
         label=get_display_name_safe(user_id, fallback)
     return f'[id{user_id}|{label}]'
+
 
 def _send(vk,peer_id,msg,keyboard=None,attachment=None,exclude_actor=False):
     actor=get_user_id()
@@ -36,11 +39,14 @@ def _send(vk,peer_id,msg,keyboard=None,attachment=None,exclude_actor=False):
     args['disable_mentions'] = True
     vk.messages.send(**args)
 
+
 def _target(s): return parse_target_id(s)
+
 
 def get_display_name_safe(uid, fallback):
     from relationships import get_display_name
     return get_display_name(uid) or fallback
+
 
 def handle_command(command,user_id,peer_id,vk,text):
     list_commands={'меню','магазин','беседы','админы','банстат','твинки'}
@@ -191,6 +197,50 @@ def handle_command(command,user_id,peer_id,vk,text):
         _send(vk, peer_id, f'Обновлено бесед: {ok} из {len(results)}.', exclude_actor=True)
         return
 
+    # ЛАЙКИ
+    if command.startswith('лайки'):
+        parts = command.split(maxsplit=1)
+        if len(parts) < 2:
+            return
+
+        url = parts[1].strip()
+        owner_id, post_id = parse_wall_url(url)
+
+        if not owner_id or not post_id:
+            _send(vk, peer_id, 'Неверная ссылка на пост.', exclude_actor=True)
+            return
+
+        user_ids, total, err = get_likes_page(vk, owner_id, post_id, page=1)
+
+        if err:
+            _send(vk, peer_id, err, exclude_actor=True)
+            return
+
+        if not user_ids:
+            _send(vk, peer_id, 'На этом посте нет лайков.', exclude_actor=True)
+            return
+
+        total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+
+        lines = [
+            f'📊 Лайки на пост',
+            f'Страница 1 из {total_pages}',
+            f'Всего: {total}',
+            '',
+        ]
+
+        for i, uid in enumerate(user_ids, 1):
+            lines.append(f'{i}. {_user_link(vk, uid)}')
+
+        from keyboards import likes_keyboard
+        _send(
+            vk, peer_id,
+            '\n'.join(lines),
+            keyboard=likes_keyboard(owner_id, post_id, 1, total_pages),
+            exclude_actor=True,
+        )
+        return
+
     # ДУЭЛЬ
     if command.startswith('дуэль'):
         if not get_feature(peer_id, 'дуэль'):
@@ -223,6 +273,70 @@ def handle_command(command,user_id,peer_id,vk,text):
             disable_mentions=True,
         )
         create_duel(user_id, opponent, peer_id, None)
+        return
+
+    # РУЛЕТКА
+    if command.startswith('рулетка'):
+        if not get_feature(peer_id, 'казино'):
+            _send(vk, peer_id, 'Казино в этой беседе запрещено.', exclude_actor=True)
+            return
+
+        parts = command.split()
+        if len(parts) != 2:
+            return
+
+        try:
+            bet = int(parts[1])
+        except ValueError:
+            return
+
+        if bet < 1000:
+            _send(vk, peer_id, 'Минимальная ставка: 1 000 монет.', exclude_actor=True)
+            return
+
+        user = get_user(user_id)
+        if not user:
+            return
+        if bet > user[4]:
+            _send(vk, peer_id, 'Недостаточно монет.', exclude_actor=True)
+            return
+
+        idx, number, color = spin_wheel()
+
+        color_ru = {
+            'red': 'Красное',
+            'black': 'Чёрное',
+            'green': 'Зелёное',
+        }[color]
+
+        if color == 'black':
+            mult = 0
+        elif color == 'red':
+            mult = 2
+        else:
+            mult = 5
+
+        win_amount = bet * mult
+        update_coins(user_id, win_amount - bet)
+
+        try:
+            photo_path = draw_wheel(idx)
+            attachment = upload_photo(vk, photo_path, peer_id)
+        except Exception as e:
+            print(f'Не удалось сгенерировать/загрузить колесо: {e}')
+            attachment = None
+
+        text_roulette = (
+            f'{_user_link(vk, user_id)}\n'
+            f'Выпало: {number} — {color_ru}\n'
+            f'Множитель: х{mult}\n'
+            f'Выигрыш: {win_amount:,}'
+        )
+
+        if attachment:
+            _send(vk, peer_id, text_roulette, attachment=attachment, exclude_actor=True)
+        else:
+            _send(vk, peer_id, text_roulette, exclude_actor=True)
         return
 
     # КАЗИНО
@@ -397,76 +511,6 @@ def handle_command(command,user_id,peer_id,vk,text):
             rp_text,rp_photo=result
             if rp_text:
                 _send(vk,peer_id,rp_text,attachment=rp_photo)
-        return
-
-        # РУЛЕТКА
-    if command.startswith('рулетка'):
-        if not get_feature(peer_id, 'казино'):
-            _send(vk, peer_id, 'Казино в этой беседе запрещено.', exclude_actor=True)
-            return
-
-        parts = command.split()
-        if len(parts) != 2:
-            return
-
-        try:
-            bet = int(parts[1])
-        except ValueError:
-            return
-
-        if bet < 1000:
-            _send(vk, peer_id, 'Минимальная ставка: 1 000 монет.', exclude_actor=True)
-            return
-
-        user = get_user(user_id)
-        if not user:
-            return
-        if bet > user[4]:
-            _send(vk, peer_id, 'Недостаточно монет.', exclude_actor=True)
-            return
-
-        # Крутим
-        idx, number, color = spin_wheel()
-
-        color_ru = {
-            'red': 'Красное',
-            'black': 'Чёрное',
-            'green': 'Зелёное',
-        }[color]
-
-        # Множители
-        if color == 'black':
-            mult = 0
-        elif color == 'red':
-            mult = 2
-        else:  # green
-            mult = 5
-
-        win_amount = bet * mult
-        # Вычитаем ставку, добавляем выигрыш
-        update_coins(user_id, win_amount - bet)
-
-        # Рисуем колесо
-        try:
-            photo_path = draw_wheel(idx)
-            attachment = upload_photo(vk, photo_path, peer_id)
-        except Exception as e:
-            print(f'Не удалось сгенерировать/загрузить колесо: {e}')
-            attachment = None
-
-        balance = user[4] + win_amount - bet
-
-        text_roulette = (
-            f'{_user_link(vk, user_id)}\n'
-            f'Выпало: {number} — {color_ru}\n'
-            f'Множитель: х{mult}\n'
-            f'Выигрыш: {win_amount:,}'
-        )
-
-        if attachment:
-            _send(vk, peer_id, text_roulette, attachment=attachment, exclude_actor=True)
-        else:
-            _send(vk, peer_id, text_roulette, exclude_actor=True)
         return
 
     # Property

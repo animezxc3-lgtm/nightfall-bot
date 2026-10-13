@@ -43,13 +43,7 @@ SHOP_MENU = {
 
 
 def profession_keyboard():
-    PROFESSION_BUTTONS = {
-        'шлюха': '🍆 Шлюха',
-        'алкаш': '🍺 Алкаш',
-        'тиммейт': '🎯 Тиммейт из ада',
-        'врач': '🩺 Врач',
-        'вор': '🥷 Вор',
-    }
+    PROFESSION_BUTTONS = {'шлюха':'🍆 Шлюха','алкаш':'🍺 Алкаш','тиммейт':'🎯 Тиммейт из ада','врач':'🩺 Врач','вор':'🥷 Вор'}
     buttons = [_btn(label, 'hire', profession=key) for key, label in PROFESSION_BUTTONS.items()]
     rows = [buttons[:2], buttons[2:4], buttons[4:5]]
     return {'inline': True, 'buttons': rows}
@@ -92,6 +86,24 @@ def application_review_keyboard(applicant_id):
         _btn('✅ Принять', 'app_accept', applicant=applicant_id),
         _btn('❌ Отклонить', 'app_decline', applicant=applicant_id),
     ]]}
+
+
+def likes_keyboard(owner_id, post_id, page, total_pages):
+    """Кнопки для листания лайков."""
+    buttons = []
+
+    if page > 1:
+        buttons.append(_btn('⬅️ Назад', 'likes_page',
+                            owner=owner_id, post=post_id, page=page - 1))
+
+    if page < total_pages:
+        buttons.append(_btn('➡️ Вперёд', 'likes_page',
+                            owner=owner_id, post=post_id, page=page + 1))
+
+    if not buttons:
+        buttons.append(_btn('—', 'noop'))
+
+    return {'inline': True, 'buttons': [buttons]}
 
 
 def rp_keyboard():
