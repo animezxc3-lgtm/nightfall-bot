@@ -5,7 +5,6 @@ from admin_commands import handle_admin_command
 from games import casino
 from wheel import spin_wheel, draw_wheel
 from vk_upload import upload_photo
-from likes_handler import parse_wall_url, get_likes_page, PER_PAGE
 from jobs.work_handler import work,hire,fire,job_stats
 from handlers.user_handlers import (
     get_profile,

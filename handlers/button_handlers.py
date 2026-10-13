@@ -1,5 +1,5 @@
 import json
-from keyboards import menu_keyboard, back_to_menu_keyboard, SHOP_MENU, profession_keyboard, shop_items_keyboard, likes_keyboard
+from keyboards import menu_keyboard, back_to_menu_keyboard, SHOP_MENU, profession_keyboard, shop_items_keyboard
 from admin_commands import get_admin_level
 from database import get_duel_for_opponent, delete_duel
 
@@ -53,46 +53,6 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             )
 
     is_admin = get_admin_level(user_id, peer_id) >= 1
-
-    # ЛАЙКИ — листание
-    if cmd == 'likes_page':
-        from likes_handler import get_likes_page, PER_PAGE
-
-        owner_id = payload.get('owner')
-        post_id = payload.get('post')
-        page = payload.get('page', 1)
-
-        if not owner_id or not post_id:
-            edit('Ошибка данных.')
-            return
-
-        user_ids, total, err = get_likes_page(vk, owner_id, post_id, page)
-
-        if err:
-            edit(err)
-            return
-
-        total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
-
-        from relationships import get_display_name
-
-        def _mention(uid):
-            name = get_display_name(uid) or 'Пользователь'
-            return f'[id{uid}|{name}]'
-
-        lines = [
-            f'📊 Лайки на пост',
-            f'Страница {page} из {total_pages}',
-            f'Всего: {total}',
-            '',
-        ]
-
-        start_index = (page - 1) * PER_PAGE
-        for i, uid in enumerate(user_ids, 1):
-            lines.append(f'{start_index + i}. {_mention(uid)}')
-
-        edit('\n'.join(lines), likes_keyboard(owner_id, post_id, page, total_pages))
-        return
 
     # ЗАЯВКИ
     if cmd in ('app_accept', 'app_decline'):
@@ -315,7 +275,6 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл выдать права @user <уровень> <номер_беседы>\n'
             'лл чс адм @user\n'
             'лл убрать чс адм @user\n'
-            'лл лайки <ссылка>\n'
             '\n'
             '👥 ТВИНКИ:\n'
             'лл твинк @user\n'
