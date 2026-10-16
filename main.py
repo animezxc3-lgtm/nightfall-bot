@@ -125,6 +125,8 @@ for event in longpoll.listen():
 
         if event.type!=VkBotEventType.MESSAGE_NEW:continue
         m=event.object.message; text=m.get('text','').strip();peer=m['peer_id'];uid=m['from_id'];is_chat=peer>2000000000
+        if is_chat:
+            print(f'🔎 PEER_ID={peer} | TEXT={text[:30]}')
         if uid<=0:continue
 
         action=m.get('action') or {}
