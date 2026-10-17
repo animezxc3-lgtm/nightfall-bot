@@ -63,28 +63,30 @@ def _header_line(title):
 def build_pin_text(vk, peer_id):
     title = _chat_title(vk, peer_id)
 
-    roles = {1: [], 2: [], 3: [], 4: [], 5: [], 6: []}
+    # Собираем роли по уровням (1-7)
+    roles = {1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: []}
     seen = set()
 
+    # 1. ГЛОБАЛЬНЫЕ РОЛИ (7 - Лелуш, 6 - Вершитель)
     for uid, level in get_all_global_roles():
-        if level not in (5, 6):
-            continue
         if uid in seen:
             continue
-        roles[level].append(uid)
-        seen.add(uid)
+        if level in (6, 7):
+            roles[level].append(uid)
+            seen.add(uid)
 
+    # Если создатель не был добавлен (его нет в БД), добавляем принудительно на 7 уровень
     if CREATOR_ID not in seen:
-        roles[6].append(CREATOR_ID)
+        roles[7].append(CREATOR_ID)
         seen.add(CREATOR_ID)
 
+    # 2. ЛОКАЛЬНЫЕ РОЛИ (5 - Куратор, 4 - ЗК, 3 - Рекрутер, 2 - Активист, 1 - Стажёр)
     for uid, level in get_admins_for_chat(peer_id):
-        if level not in (1, 2, 3, 4):
-            continue
         if uid in seen:
             continue
-        roles[level].append(uid)
-        seen.add(uid)
+        if level in (1, 2, 3, 4, 5):
+            roles[level].append(uid)
+            seen.add(uid)
 
     lines = [
         _header_line(title),
@@ -101,32 +103,28 @@ def build_pin_text(vk, peer_id):
         '',
     ]
 
-    lines.append('➤ 👑 Лелуш ви Британия:')
-    if roles[6]:
-        for uid in roles[6]:
-            lines.append(f'- {_mention(vk, uid)}')
-    else:
-        lines.append('absent')
+    # ─── ГЛОБАЛЬНЫЕ РОЛИ ───
+    global_roles = [
+        (7, '👑', 'Лелуш ви Британия'),
+        (6, '⚖', 'Вершитель правосудия'),
+    ]
+    for level, emoji, label in global_roles:
+        lines.append(f'➤ {emoji} {label}:')
+        if roles[level]:
+            for uid in roles[level]:
+                lines.append(f'- {_mention(vk, uid)}')
+        else:
+            lines.append('absent')
+        lines.extend(['', DIVIDER, ''])
 
-    lines.extend(['', DIVIDER, ''])
-
-    lines.append('➤ ⚖ Вершитель правосудия:')
-    if roles[5]:
-        for uid in roles[5]:
-            lines.append(f'- {_mention(vk, uid)}')
-    else:
-        lines.append('absent')
-
-    lines.extend(['', DIVIDER, ''])
-
+    # ─── ЛОКАЛЬНЫЕ РОЛИ ───
     local_roles = [
-        (5, '👑', 'Куратор'),
-        (4, '📱', 'Заместитель Куратора'),
+        (5, '🌟', 'Куратор'),
+        (4, '📱', 'Заместитель Куратора (ЗК)'),
         (3, '🎯', 'Рекрутеры'),
         (2, '⚡', 'Активисты'),
         (1, '🎓', 'Стажёры'),
     ]
-
     for level, emoji, label in local_roles:
         lines.append(f'➤ {emoji} {label}:')
         if roles[level]:
