@@ -32,7 +32,7 @@ REWARDS = {
 def get_user_level(user_id):
     """Возвращает уровень пользователя (глобальный или максимальный локальный)."""
     g = get_global_role(user_id)
-    if g in (5, 6, 7):
+    if g in (6, 7):  # <-- ИСПРАВЛЕНО: только Вершитель и Лелуш
         return g
     with db_cursor() as (_, c):
         r = c.execute("SELECT MAX(level) FROM admin_chat_rights WHERE user_id=?", (user_id,)).fetchone()

@@ -588,23 +588,23 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
 
         actor_level = get_admin_level(user_id, peer_id)
 
-        # Глобальные роли 5, 6, 7
-        if level in (5, 6, 7):
+                # Глобальные роли (ТОЛЬКО Вершитель 6 и Лелуш 7)
+        if level in (6, 7):
             if actor_level < 7:
-                _send(vk, peer_id, 'Недостаточно прав', actor_inline=False)
+                _send(vk, peer_id, 'Недостаточно прав (глобальные роли выдает только Лелуш).', actor_inline=False)
                 return True
             if level == 7 and target == CREATOR_ID:
                 _send(vk, peer_id, 'Этот пользователь уже является создателем.', actor_inline=False)
                 return True
             set_global_role(target, level)
             role = ROLE_NAMES[level]
-            _send(vk, peer_id, f'назначил {_user_link(vk, target)} на роль {role}.')
+            _send(vk, peer_id, f'назначил {_user_link(vk, target)} на глобальную роль {role}.')
             _refresh_all_pins(vk)
             return True
 
-        # Локальные 1-4
+        # Локальные роли (1-5)
         if chat_number is None:
-            _send(vk, peer_id, 'Укажи номер беседы.', actor_inline=False)
+            _send(vk, peer_id, 'Укажи номер беседы для локальной роли.', actor_inline=False)
             return True
 
         target_peer = chat_number if chat_number > 2000000000 else 2000000000 + chat_number
