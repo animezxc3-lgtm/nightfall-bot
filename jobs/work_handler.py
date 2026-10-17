@@ -29,11 +29,11 @@ def work(user_id, *_):
 
     base_salary = get_salary(level)
     multiplier = get_salary_multiplier(user_id) or 1.0
-    salary = int(base_salary * multiplier) # Явно переводим в int
+    salary = int(base_salary * multiplier)
 
     set_salary(user_id, salary)
     update_coins(user_id, salary)
-    update_power(user_id, POWER_PER_WORK)  # идёт в power (Сила Гиаса)
+    update_power(user_id, POWER_PER_WORK)
 
     exp += 1
     new_level = level
@@ -56,3 +56,71 @@ def work(user_id, *_):
         promoted_text = f'повышен до {get_level_name(job, new_level)}!'
 
     return text, promoted_text
+
+
+def hire(user_id, profession_key, *_):
+    user = get_user(user_id)
+    if not user:
+        return 'Профиль не найден.'
+    # 6 — job
+    if user[6] != 'Отсутствует' and user[6] in PROFESSIONS:
+        return f'Ты уже работаешь: {PROFESSIONS[user[6]]["name"]}. Сначала используй `лл уволиться`.'
+    if profession_key not in PROFESSIONS:
+        return 'Такой профессии нет.'
+
+    update_job_field(user_id, 'job_name', profession_key)
+    update_job_field(user_id, 'level', 0)
+    update_job_field(user_id, 'exp', 0)
+    update_job_field(user_id, 'last_work', None)
+
+    return f'устроился на работу {PROFESSIONS[profession_key]["name"]}.'
+
+
+def fire(user_id, *_):
+    user = get_user(user_id)
+    if not user:
+        return 'Профиль не найден.'
+    # 6 — job
+    if user[6] == 'Отсутствует' or user[6] not in PROFESSIONS:
+        return 'Ты и так безработный.'
+
+    update_job_field(user_id, 'job_name', 'Отсутствует')
+    update_job_field(user_id, 'level', 0)
+    update_job_field(user_id, 'exp', 0)
+    update_job_field(user_id, 'last_work', None)
+    set_salary(user_id, 0)
+
+    return 'Ты уволился. Профессия, ступень и прогресс сброшены.'
+
+
+def job_stats(target_id, viewer_id=None):
+    """Статистика работы для команды лл работа."""
+    user = get_user(target_id)
+    if not user:
+        return None
+
+    # 6 job | 18 job_level | 19 job_exp
+    job = user[6]
+    level = user[18] or 0
+    exp = user[19] or 0
+
+    if job == 'Отсутствует' or job not in PROFESSIONS:
+        if viewer_id is not None and viewer_id == target_id:
+            return 'У вас нет работы.'
+        return None
+
+    job_name = PROFESSIONS[job]['name']
+    level_name = get_level_name(job, level)
+    base_salary = get_salary(level)
+    multiplier = get_salary_multiplier(target_id) or 1.0
+    actual_salary = int(base_salary * multiplier)
+
+    return {
+        'job_name': job_name,
+        'level_name': level_name,
+        'salary': actual_salary,
+        'base_salary': base_salary,
+        'multiplier': multiplier,
+        'days': exp,
+        'power_per_work': POWER_PER_WORK,
+    }
