@@ -1,6 +1,14 @@
 from datetime import datetime
 from jobs.professions import PROFESSIONS, get_level_name, get_salary, get_max_level, PROMOTION_DAYS
-from database import update_coins, update_power, update_job_field, get_user, set_salary, increment_work_days
+from database import (
+    update_coins,
+    update_power,
+    update_job_field,
+    get_user,
+    set_salary,
+    increment_work_days,
+    get_salary_multiplier,
+)
 
 POWER_PER_WORK = 15
 
@@ -11,10 +19,12 @@ def work(user_id, *_):
     if not user:
         return 'Профиль не найден.', None
 
-    job = user[5]
-    level = user[17] or 0
-    exp = user[18] or 0
-    last = user[19]
+    # Индексы get_user:
+    # 6 job | 7 salary | 8 work_days | 18 job_level | 19 job_exp | 20 job_last_work
+    job = user[6]
+    level = user[18] or 0
+    exp = user[19] or 0
+    last = user[20]
 
     if job == 'Отсутствует' or job not in PROFESSIONS:
         return 'Ты безработный. Используй `лл устроиться`.', None
@@ -23,10 +33,13 @@ def work(user_id, *_):
     if last and str(last) == str(today):
         return 'Ты уже работал сегодня. Приходи завтра!', None
 
-    salary = get_salary(level)
+    base_salary = get_salary(level)
+    multiplier = get_salary_multiplier(user_id)
+    salary = int(base_salary * multiplier)
+
     set_salary(user_id, salary)
     update_coins(user_id, salary)
-    update_power(user_id, POWER_PER_WORK)
+    update_power(user_id, POWER_PER_WORK)  # идёт в power (Сила Гиаса)
 
     exp += 1
     new_level = level
@@ -55,8 +68,9 @@ def hire(user_id, profession_key, *_):
     user = get_user(user_id)
     if not user:
         return 'Профиль не найден.'
-    if user[5] != 'Отсутствует' and user[5] in PROFESSIONS:
-        return f'Ты уже работаешь: {PROFESSIONS[user[5]]["name"]}. Сначала используй `лл уволиться`.'
+    # 6 — job
+    if user[6] != 'Отсутствует' and user[6] in PROFESSIONS:
+        return f'Ты уже работаешь: {PROFESSIONS[user[6]]["name"]}. Сначала используй `лл уволиться`.'
     if profession_key not in PROFESSIONS:
         return 'Такой профессии нет.'
 
@@ -72,13 +86,15 @@ def fire(user_id, *_):
     user = get_user(user_id)
     if not user:
         return 'Профиль не найден.'
-    if user[5] == 'Отсутствует' or user[5] not in PROFESSIONS:
+    # 6 — job
+    if user[6] == 'Отсутствует' or user[6] not in PROFESSIONS:
         return 'Ты и так безработный.'
 
     update_job_field(user_id, 'job_name', 'Отсутствует')
     update_job_field(user_id, 'level', 0)
     update_job_field(user_id, 'exp', 0)
     update_job_field(user_id, 'last_work', None)
+    set_salary(user_id, 0)
 
     return 'Ты уволился. Профессия, ступень и прогресс сброшены.'
 
@@ -89,9 +105,10 @@ def job_stats(target_id, viewer_id=None):
     if not user:
         return None
 
-    job = user[5]
-    level = user[17] or 0
-    exp = user[18] or 0
+    # 6 job | 18 job_level | 19 job_exp
+    job = user[6]
+    level = user[18] or 0
+    exp = user[19] or 0
 
     if job == 'Отсутствует' or job not in PROFESSIONS:
         if viewer_id is not None and viewer_id == target_id:
@@ -100,11 +117,16 @@ def job_stats(target_id, viewer_id=None):
 
     job_name = PROFESSIONS[job]['name']
     level_name = get_level_name(job, level)
-    salary = get_salary(level)
+    base_salary = get_salary(level)
+    multiplier = get_salary_multiplier(target_id)
+    actual_salary = int(base_salary * multiplier)
 
     return {
         'job_name': job_name,
         'level_name': level_name,
-        'salary': salary,
+        'salary': actual_salary,
+        'base_salary': base_salary,
+        'multiplier': multiplier,
         'days': exp,
+        'power_per_work': POWER_PER_WORK,
     }

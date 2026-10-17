@@ -58,6 +58,7 @@ def migrate_database():
             name TEXT NOT NULL,
             nickname TEXT DEFAULT '',
             soul_gems INTEGER DEFAULT 0,
+            power INTEGER DEFAULT 0,
             coins INTEGER DEFAULT 100,
             job TEXT DEFAULT 'Отсутствует',
             salary INTEGER DEFAULT 0,
@@ -78,7 +79,10 @@ def migrate_database():
             family_surname TEXT DEFAULT '',
             profile_image TEXT DEFAULT '',
             custom_role TEXT DEFAULT '',
-            last_message_at TEXT
+            last_message_at TEXT,
+            status TEXT DEFAULT '',
+            gif_link TEXT DEFAULT '',
+            salary_multiplier REAL DEFAULT 1.0
         );
 
         CREATE TABLE IF NOT EXISTS messages_stats (
@@ -237,6 +241,16 @@ def migrate_database():
             added_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS admin_weekly_stats (
+            user_id INTEGER NOT NULL,
+            week_key TEXT NOT NULL,
+            messages INTEGER DEFAULT 0,
+            invites INTEGER DEFAULT 0,
+            reports INTEGER DEFAULT 0,
+            gems_awarded INTEGER DEFAULT 0,
+            PRIMARY KEY(user_id, week_key)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_warning_events_user_date
             ON warning_events(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_kick_events_user_date
@@ -246,10 +260,25 @@ def migrate_database():
         """)
 
         cols = {row[1] for row in c.execute("PRAGMA table_info(users)").fetchall()}
+
         if "admin_warnings" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN admin_warnings INTEGER DEFAULT 0")
         if "last_message_at" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN last_message_at TEXT")
+        if "status" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT ''")
+        if "gif_link" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN gif_link TEXT DEFAULT ''")
+        if "salary_multiplier" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN salary_multiplier REAL DEFAULT 1.0")
+
+        # Перенос Силы Гиаса из soul_gems в power (один раз)
+        if "power" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN power INTEGER DEFAULT 0")
+            c.execute("UPDATE users SET power = soul_gems")
+            c.execute("UPDATE users SET soul_gems = 0")
+            print("🔄 Сила Гиаса перенесена из soul_gems в power, камни обнулены")
+
         wcols = {row[1] for row in c.execute("PRAGMA table_info(warning_events)").fetchall()}
         if "peer_id" not in wcols:
             c.execute("ALTER TABLE warning_events ADD COLUMN peer_id INTEGER")
@@ -268,18 +297,16 @@ def migrate_database():
         if "job_migrated_v2" not in cols:
             c.execute("UPDATE users SET job='Отсутствует', salary=0, job_level=0, job_exp=0, job_last_work=NULL")
             c.execute("ALTER TABLE users ADD COLUMN job_migrated_v2 INTEGER DEFAULT 1")
-            print("🔄 Обнулены работы у всех пользователей (миграция v2)")
+            print("🔄 Обнулены работы (миграция v2)")
 
         rcols = {row[1] for row in c.execute("PRAGMA table_info(relationships)").fetchall()}
         if "relationship_since" not in rcols:
             c.execute("ALTER TABLE relationships ADD COLUMN relationship_since TEXT")
-            # Всем существующим парам — сегодняшняя дата
             c.execute("""
                 UPDATE relationships
                 SET relationship_since = CURRENT_TIMESTAMP
                 WHERE partner_id IS NOT NULL AND relationship_since IS NULL
             """)
-            print("🔄 Существующим парам проставлена сегодняшняя дата (relationship_since)")
 
 
 def create_user(user_id, name):
@@ -303,10 +330,11 @@ def user_exists(user_id):
 def get_user(user_id):
     with db_cursor() as (_, c):
         c.execute("""
-            SELECT user_id,name,nickname,soul_gems,coins,job,salary,work_days,
+            SELECT user_id,name,nickname,soul_gems,power,coins,job,salary,work_days,
                    housing,car,phone,role,rights,warnings,join_date,messages_total,
                    banned,job_level,job_exp,job_last_work,family_surname,
-                   profile_image,custom_role,admin_warnings,last_message_at
+                   profile_image,custom_role,admin_warnings,last_message_at,
+                   status,gif_link,salary_multiplier
             FROM users WHERE user_id=?
         """, (user_id,))
         r = c.fetchone()
@@ -324,10 +352,7 @@ def add_twink(owner_id, twink_id):
         r = c.execute("SELECT owner_id FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
         if r:
             return False
-        c.execute("""
-            INSERT INTO twinks(twink_id, owner_id, added_at)
-            VALUES(?,?,CURRENT_TIMESTAMP)
-        """, (twink_id, owner_id))
+        c.execute("INSERT INTO twinks(twink_id, owner_id, added_at) VALUES(?,?,CURRENT_TIMESTAMP)", (twink_id, owner_id))
         return True
 
 
@@ -354,7 +379,7 @@ def is_twink(twink_id):
         return r is not None
 
 
-# ============ ПОИСК БЕСЕДЫ ПО НОМЕРУ ============
+# ============ ПОИСК БЕСЕДЫ ============
 
 def find_chats_by_number(vk, number):
     import re as _re
@@ -384,7 +409,7 @@ def find_chats_by_number(vk, number):
     return result
 
 
-# ============ ОСТАЛЬНОЕ ============
+# ============ РОЛИ ============
 
 def set_global_role(user_id, level):
     with db_cursor(True) as (_, c):
@@ -429,15 +454,6 @@ def record_chat_join(peer_id, user_id, invited_by=None):
         """, (peer_id, user_id, now, invited_by))
 
 
-def get_inviter(peer_id, user_id):
-    with db_cursor() as (_, c):
-        r = c.execute(
-            "SELECT invited_by FROM chat_members WHERE peer_id=? AND user_id=?",
-            (peer_id, user_id)
-        ).fetchone()
-        return r[0] if r and r[0] else None
-
-
 def get_first_inviter(user_id):
     with db_cursor() as (_, c):
         r = c.execute(
@@ -465,13 +481,6 @@ def get_chat_join_date(peer_id, user_id):
         return r[0] if r else None
 
 
-def update_last_message(user_id):
-    from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo('Europe/Moscow')).strftime("%Y-%m-%d %H:%M:%S")
-    with db_cursor(True) as (_, c):
-        c.execute("UPDATE users SET last_message_at=? WHERE user_id=?", (now, user_id))
-
-
 def get_last_message_at(user_id):
     with db_cursor() as (_, c):
         r = c.execute("SELECT last_message_at FROM users WHERE user_id=?", (user_id,)).fetchone()
@@ -483,28 +492,34 @@ def set_profile_image(user_id, attachment):
         c.execute("UPDATE users SET profile_image=? WHERE user_id=?", (attachment or '', user_id))
 
 
-def update_user_rights(user_id, rights, peer_id=None, level=None):
+def set_status(user_id, status):
     with db_cursor(True) as (_, c):
-        if peer_id is None:
-            c.execute(
-                "UPDATE users SET rights=?,role=? WHERE user_id=?",
-                (rights, rights, user_id)
-            )
-        else:
-            c.execute("""
-                INSERT INTO admin_chat_rights(peer_id,user_id,level)
-                VALUES(?,?,?)
-                ON CONFLICT(peer_id,user_id) DO UPDATE SET level=excluded.level
-            """, (peer_id, user_id, level))
+        c.execute("UPDATE users SET status=? WHERE user_id=?", (status or '', user_id))
+
+
+def set_gif_link(user_id, link):
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET gif_link=? WHERE user_id=?", (link or '', user_id))
+
+
+def get_salary_multiplier(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT salary_multiplier FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return float(r[0]) if r and r[0] else 1.0
+
+
+def increase_salary_multiplier(user_id, step=0.5, max_value=7.0):
+    current = get_salary_multiplier(user_id)
+    new = min(current + step, max_value)
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET salary_multiplier=? WHERE user_id=?", (new, user_id))
+    return new
 
 
 def set_admin_level(peer_id, user_id, level, role_name):
     with db_cursor(True) as (_, c):
         if level <= 0:
-            c.execute(
-                "DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?",
-                (peer_id, user_id)
-            )
+            c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
         else:
             c.execute("""
                 INSERT INTO admin_chat_rights(peer_id,user_id,level)
@@ -515,11 +530,10 @@ def set_admin_level(peer_id, user_id, level, role_name):
 
 def get_admin_level_for_chat(peer_id, user_id):
     with db_cursor() as (_, c):
-        c.execute(
+        r = c.execute(
             "SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?",
             (peer_id, user_id)
-        )
-        r = c.fetchone()
+        ).fetchone()
         return int(r[0]) if r else 0
 
 
@@ -528,487 +542,12 @@ def update_coins(user_id, amount):
         c.execute("UPDATE users SET coins=coins+? WHERE user_id=?", (amount, user_id))
 
 
-def transfer_coins(sender, target, amount):
-    if amount <= 0 or sender == target:
-        return False
-    with db_cursor(True) as (_, c):
-        c.execute(
-            "UPDATE users SET coins=coins-? WHERE user_id=? AND coins>=?",
-            (amount, sender, amount)
-        )
-        if c.rowcount != 1:
-            return False
-        c.execute("UPDATE users SET coins=coins+? WHERE user_id=?", (amount, target))
-        return c.rowcount == 1
-
-
-def add_message_count(user_id, peer_id=None):
-    from zoneinfo import ZoneInfo
-    moscow = ZoneInfo('Europe/Moscow')
-    today = datetime.now(moscow).date().isoformat()
-    now = datetime.now(moscow).strftime("%Y-%m-%d %H:%M:%S")
-
-    with db_cursor(True) as (_, c):
-        c.execute(
-            "UPDATE users SET messages_total=messages_total+1, last_message_at=? WHERE user_id=?",
-            (now, user_id)
-        )
-        c.execute("""
-            INSERT INTO messages_stats(user_id,date,count) VALUES(?,?,1)
-            ON CONFLICT(user_id,date) DO UPDATE SET count=messages_stats.count+1
-        """, (user_id, today))
-
-        if peer_id and peer_id > 2000000000:
-            c.execute("""
-                INSERT INTO chat_message_stats(peer_id,user_id,date,count)
-                VALUES(?,?,?,1)
-                ON CONFLICT(peer_id,user_id,date)
-                DO UPDATE SET count=chat_message_stats.count+1
-            """, (peer_id, user_id, today))
-            ensure_chat_settings(c, peer_id)
-
-
-def _sum(c, table, where, args):
-    c.execute(f"SELECT COALESCE(SUM(count),0) FROM {table} WHERE {where}", args)
-    return int(c.fetchone()[0])
-
-
-def get_messages_stats(user_id):
-    from zoneinfo import ZoneInfo
-    moscow = ZoneInfo('Europe/Moscow')
-    today = datetime.now(moscow).date()
-    week_start = _week_start(today)
-    month_start = _month_start(today)
-
-    with db_cursor() as (_, c):
-        c.execute("SELECT COALESCE(messages_total,0) FROM users WHERE user_id=?", (user_id,))
-        total = c.fetchone()
-        return {
-            'today': _sum(c, 'messages_stats', 'user_id=? AND date=?',
-                           (user_id, today.isoformat())),
-            'week': _sum(c, 'messages_stats', 'user_id=? AND date>=?',
-                         (user_id, week_start.isoformat())),
-            'month': _sum(c, 'messages_stats', 'user_id=? AND date>=?',
-                          (user_id, month_start.isoformat())),
-            'total': int(total[0]) if total else 0
-        }
-
-
-def get_chat_activity(peer_id):
-    from zoneinfo import ZoneInfo
-    moscow = ZoneInfo('Europe/Moscow')
-    today = datetime.now(moscow).date()
-    week_start = _week_start(today)
-    month_start = _month_start(today)
-
-    with db_cursor() as (_, c):
-        return {
-            'today': _sum(c, 'chat_message_stats', 'peer_id=? AND date=?',
-                          (peer_id, today.isoformat())),
-            'week': _sum(c, 'chat_message_stats', 'peer_id=? AND date>=?',
-                         (peer_id, week_start.isoformat())),
-            'month': _sum(c, 'chat_message_stats', 'peer_id=? AND date>=?',
-                          (peer_id, month_start.isoformat())),
-            'total': _sum(c, 'chat_message_stats', 'peer_id=?', (peer_id,))
-        }
-
-
-def get_chat_user_week_messages(peer_id, user_id, start_date, end_date):
-    with db_cursor() as (_, c):
-        return _sum(
-            c, 'chat_message_stats',
-            'peer_id=? AND user_id=? AND date>=? AND date<=?',
-            (peer_id, user_id, start_date, end_date)
-        )
-
-
-def get_all_chats():
-    with db_cursor() as (_, c):
-        c.execute("""
-            SELECT peer_id, cleanup_enabled FROM chat_settings
-            ORDER BY peer_id
-        """)
-        return c.fetchall()
-
-
-def get_broadcast_chats():
-    with db_cursor() as (_, c):
-        c.execute("""
-            SELECT peer_id FROM chat_settings
-            WHERE broadcast_enabled=1
-            ORDER BY peer_id
-        """)
-        return [row[0] for row in c.fetchall()]
-
-
-def ensure_chat_settings(c, peer_id):
-    c.execute("""
-        INSERT INTO chat_settings(peer_id,welcome_message)
-        VALUES(?,?)
-        ON CONFLICT(peer_id) DO NOTHING
-    """, (peer_id, DEFAULT_WELCOME))
-
-
-def ensure_chat(peer_id):
-    with db_cursor(True) as (_, c):
-        ensure_chat_settings(c, peer_id)
-
-
-def get_welcome_data(peer_id):
-    with db_cursor(True) as (_, c):
-        ensure_chat_settings(c, peer_id)
-        c.execute(
-            "SELECT welcome_message,welcome_photo FROM chat_settings WHERE peer_id=?",
-            (peer_id,)
-        )
-        r = c.fetchone()
-        return r or (DEFAULT_WELCOME, '')
-
-
-def get_chat_settings(peer_id):
-    return get_welcome_data(peer_id)[0]
-
-
-def set_welcome_message(peer_id, message, photo=''):
-    with db_cursor(True) as (_, c):
-        ensure_chat_settings(c, peer_id)
-        c.execute(
-            "UPDATE chat_settings SET welcome_message=?,welcome_photo=? WHERE peer_id=?",
-            (message, photo or '', peer_id)
-        )
-
-
-def is_cleanup_enabled(peer_id):
-    with db_cursor() as (_, c):
-        c.execute("SELECT cleanup_enabled FROM chat_settings WHERE peer_id=?", (peer_id,))
-        r = c.fetchone()
-        return bool(r and r[0])
-
-
-def set_cleanup_enabled(peer_id, enabled):
-    with db_cursor(True) as (_, c):
-        ensure_chat_settings(c, peer_id)
-        c.execute(
-            "UPDATE chat_settings SET cleanup_enabled=? WHERE peer_id=?",
-            (int(enabled), peer_id)
-        )
-
-
-def toggle_cleanup(peer_id):
-    new = not is_cleanup_enabled(peer_id)
-    set_cleanup_enabled(peer_id, new)
-    return new
-
-
-def set_feature(peer_id, feature, enabled):
-    if feature == 'чистка':
-        set_cleanup_enabled(peer_id, enabled)
-        return
-    col = {
-        'казино': 'casino_enabled',
-        'мут': 'mute_enabled',
-        'дуэль': 'duel_enabled',
-        'рассылка': 'broadcast_enabled',
-    }[feature]
-    with db_cursor(True) as (_, c):
-        ensure_chat_settings(c, peer_id)
-        c.execute(f"UPDATE chat_settings SET {col}=? WHERE peer_id=?", (int(enabled), peer_id))
-
-
-def get_feature(peer_id, feature):
-    if feature == 'чистка':
-        return is_cleanup_enabled(peer_id)
-    col = {
-        'казино': 'casino_enabled',
-        'мут': 'mute_enabled',
-        'дуэль': 'duel_enabled',
-        'рассылка': 'broadcast_enabled',
-    }[feature]
-    with db_cursor() as (_, c):
-        c.execute(f"SELECT {col} FROM chat_settings WHERE peer_id=?", (peer_id,))
-        r = c.fetchone()
-        return bool(r and r[0])
-
-
-def toggle_feature(peer_id, feature):
-    new = not get_feature(peer_id, feature)
-    set_feature(peer_id, feature, new)
-    return new
-
-
-def set_nickname(user_id, nickname):
-    with db_cursor(True) as (_, c):
-        c.execute("UPDATE users SET nickname=? WHERE user_id=?", (nickname, user_id))
-
-
-def get_nickname(user_id):
-    with db_cursor() as (_, c):
-        c.execute("SELECT nickname FROM users WHERE user_id=?", (user_id,))
-        r = c.fetchone()
-        return r[0] if r else ''
-
-
-def add_warning(user_id, peer_id=None, is_admin_warning=False):
-    with db_cursor(True) as (_, c):
-        if peer_id:
-            r = c.execute(
-                "SELECT COUNT(*) FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=1",
-                (user_id, peer_id)
-            ).fetchone()
-            current = int(r[0] or 0)
-            if current >= 3:
-                return 3
-            c.execute(
-                "INSERT INTO warning_events(user_id,peer_id,is_admin_warning,created_at) "
-                "VALUES(?,?,1,CURRENT_TIMESTAMP)",
-                (user_id, peer_id)
-            )
-            return current + 1
-
-        c.execute("SELECT admin_warnings FROM users WHERE user_id=?", (user_id,))
-        r = c.fetchone()
-        current = int(r[0] or 0) if r else 0
-        if current >= 3:
-            return 3
-        c.execute("UPDATE users SET admin_warnings=admin_warnings+1 WHERE user_id=?", (user_id,))
-        c.execute(
-            "INSERT INTO warning_events(user_id,peer_id,is_admin_warning,created_at) VALUES(?,?,1,CURRENT_TIMESTAMP)",
-            (user_id, None)
-        )
-        return current + 1
-
-
-def get_warning_count(user_id, peer_id=None):
-    with db_cursor() as (_, c):
-        if peer_id:
-            r = c.execute(
-                "SELECT COUNT(*) FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=1",
-                (user_id, peer_id)
-            ).fetchone()
-            return min(int(r[0] or 0), 3)
-        r = c.execute("SELECT admin_warnings FROM users WHERE user_id=?", (user_id,)).fetchone()
-        return min(int(r[0] or 0), 3) if r else 0
-
-
-def remove_warning(user_id, peer_id=None, is_admin_warning=True):
-    with db_cursor(True) as (_, c):
-        if peer_id:
-            row = c.execute(
-                "SELECT id FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=1 "
-                "ORDER BY id DESC LIMIT 1",
-                (user_id, peer_id)
-            ).fetchone()
-            if row:
-                c.execute("DELETE FROM warning_events WHERE id=?", (row[0],))
-            return get_warning_count(user_id, peer_id)
-        c.execute("UPDATE users SET admin_warnings=MAX(admin_warnings-1,0) WHERE user_id=?", (user_id,))
-        return get_warning_count(user_id)
-
-
-def clear_warnings(user_id, peer_id=None, is_admin_warning=True):
-    with db_cursor(True) as (_, c):
-        if peer_id:
-            c.execute(
-                "DELETE FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=1",
-                (user_id, peer_id)
-            )
-            return
-        c.execute("UPDATE users SET admin_warnings=0 WHERE user_id=?", (user_id,))
-
-
-def get_warning_stats(user_id, is_admin_warning=False, peer_id=None):
-    from zoneinfo import ZoneInfo
-    moscow = ZoneInfo('Europe/Moscow')
-    today = datetime.now(moscow).date()
-    week_start = _week_start(today)
-    month_start = _month_start(today)
-
-    with db_cursor() as (_, c):
-        params = [user_id, int(is_admin_warning)]
-        extra = ''
-        if peer_id is not None:
-            extra = ' AND peer_id=?'
-            params.append(peer_id)
-        dparams = params + [today.isoformat()]
-        wparams = params + [week_start.isoformat()]
-        mparams = params + [month_start.isoformat()]
-        q = f"user_id=? AND is_admin_warning=?{extra}"
-        d = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q} AND date(created_at)=?", dparams).fetchone()[0]
-        w = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q} AND date(created_at)>=?", wparams).fetchone()[0]
-        m = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q} AND date(created_at)>=?", mparams).fetchone()[0]
-        t = c.execute(f"SELECT COUNT(*) FROM warning_events WHERE {q}", params).fetchone()[0]
-        return {'today': int(d), 'week': int(w), 'month': int(m), 'total': int(t)}
-
-
-def add_kick_event(user_id, peer_id, kicked_by):
-    with db_cursor(True) as (_, c):
-        c.execute(
-            "INSERT INTO kick_events(user_id,peer_id,kicked_by,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
-            (user_id, peer_id, kicked_by)
-        )
-
-
-def get_kick_stats(user_id):
-    from zoneinfo import ZoneInfo
-    moscow = ZoneInfo('Europe/Moscow')
-    today = datetime.now(moscow).date()
-    week_start = _week_start(today)
-    month_start = _month_start(today)
-
-    with db_cursor() as (_, c):
-        d = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)=?", (user_id, today.isoformat())).fetchone()[0]
-        w = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)>=?", (user_id, week_start.isoformat())).fetchone()[0]
-        m = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND date(created_at)>=?", (user_id, month_start.isoformat())).fetchone()[0]
-        t = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=?", (user_id,)).fetchone()[0]
-        return {'today': int(d), 'week': int(w), 'month': int(m), 'total': int(t)}
-
-
-def is_banned(user_id):
-    with db_cursor() as (_, c):
-        c.execute("SELECT banned FROM users WHERE user_id=?", (user_id,))
-        r = c.fetchone()
-        return bool(r and r[0])
-
-
-def get_banned_users():
-    with db_cursor() as (_, c):
-        c.execute("SELECT user_id,name FROM users WHERE banned=1 ORDER BY name")
-        return c.fetchall()
-
-
-def ban_user(user_id):
-    with db_cursor(True) as (_, c):
-        c.execute("UPDATE users SET banned=1 WHERE user_id=?", (user_id,))
-
-
-def unban_user(user_id):
-    with db_cursor(True) as (_, c):
-        c.execute("UPDATE users SET banned=0 WHERE user_id=?", (user_id,))
-
-
-def update_job_field(user_id, field, value):
-    mapping = {'job_name': 'job', 'level': 'job_level', 'exp': 'job_exp', 'last_work': 'job_last_work'}
-    if field not in mapping:
-        return
-    with db_cursor(True) as (_, c):
-        c.execute(f"UPDATE users SET {mapping[field]}=? WHERE user_id=?", (value, user_id))
-
-
-def purchase_property(user_id, category, item_name, price):
-    field = {'housing': 'housing', 'car': 'car', 'phone': 'phone'}.get(category)
-    if not field or price <= 0:
-        return False
-    with db_cursor(True) as (_, c):
-        c.execute(f"""
-            UPDATE users SET coins=coins-?,{field}=?
-            WHERE user_id=? AND coins>=? AND {field}='Отсутствует'
-        """, (price, item_name, user_id, price))
-        return c.rowcount == 1
-
-
-def create_marriage_proposal(target_id, proposer_id, surname):
-    with db_cursor(True) as (_, c):
-        c.execute("""
-            INSERT INTO marriage_proposals(target_id,proposer_id,surname,created_at)
-            VALUES(?,?,?,CURRENT_TIMESTAMP)
-            ON CONFLICT(target_id) DO UPDATE SET
-                proposer_id=excluded.proposer_id,
-                surname=excluded.surname,
-                created_at=excluded.created_at
-        """, (target_id, proposer_id, surname))
-
-
-def get_marriage_proposal(target_id):
-    with db_cursor() as (_, c):
-        c.execute(
-            "SELECT proposer_id,surname,created_at FROM marriage_proposals WHERE target_id=?",
-            (target_id,)
-        )
-        return c.fetchone()
-
-
-def delete_marriage_proposal(target_id):
-    with db_cursor(True) as (_, c):
-        c.execute("DELETE FROM marriage_proposals WHERE target_id=?", (target_id,))
-
-
-def create_relationship_proposal(target_id, proposer_id):
-    with db_cursor(True) as (_, c):
-        c.execute("""
-            INSERT INTO relationship_proposals(target_id,proposer_id,created_at)
-            VALUES(?,?,CURRENT_TIMESTAMP)
-            ON CONFLICT(target_id) DO UPDATE SET
-                proposer_id=excluded.proposer_id,
-                created_at=excluded.created_at
-        """, (target_id, proposer_id))
-
-
-def get_relationship_proposal(target_id):
-    with db_cursor() as (_, c):
-        c.execute(
-            "SELECT proposer_id,created_at FROM relationship_proposals WHERE target_id=?",
-            (target_id,)
-        )
-        return c.fetchone()
-
-
-def delete_relationship_proposal(target_id):
-    with db_cursor(True) as (_, c):
-        c.execute("DELETE FROM relationship_proposals WHERE target_id=?", (target_id,))
-
-
-def create_family_proposal(target_id, proposer_id, relation_type):
-    with db_cursor(True) as (_, c):
-        c.execute("""
-            INSERT INTO family_proposals(target_id,proposer_id,relation_type,created_at)
-            VALUES(?,?,?,CURRENT_TIMESTAMP)
-            ON CONFLICT(target_id) DO UPDATE SET
-                proposer_id=excluded.proposer_id,
-                relation_type=excluded.relation_type,
-                created_at=excluded.created_at
-        """, (target_id, proposer_id, relation_type))
-
-
-def get_family_proposal(target_id):
-    with db_cursor() as (_, c):
-        c.execute(
-            "SELECT proposer_id,relation_type,created_at FROM family_proposals WHERE target_id=?",
-            (target_id,)
-        )
-        return c.fetchone()
-
-
-def delete_family_proposal(target_id):
-    with db_cursor(True) as (_, c):
-        c.execute("DELETE FROM family_proposals WHERE target_id=?", (target_id,))
-
-
-def get_property_value(user_id, category):
-    field = {'housing': 'housing', 'car': 'car', 'phone': 'phone'}[category]
-    with db_cursor() as (_, c):
-        c.execute(f"SELECT {field} FROM users WHERE user_id=?", (user_id,))
-        r = c.fetchone()
-        return r[0] if r else 'Отсутствует'
-
-
-def set_custom_role(user_id, value):
-    with db_cursor(True) as (_, c):
-        c.execute("UPDATE users SET custom_role=? WHERE user_id=?", (value, user_id))
-
-
-# ============ СИЛА ГИАСА ============
+# ============ СИЛА ГИАСА (power) ============
 
 POWER_RANKS = [
-    (0,     'Наблюдатель'),
-    (100,   'Новичок'),
-    (300,   'Стратег'),
-    (700,   'Тактик'),
-    (1500,  'Командир'),
-    (3000,  'Лидер'),
-    (6000,  'Властитель'),
-    (10000, 'Претендент на Трон'),
-    (20000, 'Королевская Особа'),
-    (50000, 'Император'),
+    (0, 'Наблюдатель'), (100, 'Новичок'), (300, 'Стратег'), (700, 'Тактик'),
+    (1500, 'Командир'), (3000, 'Лидер'), (6000, 'Властитель'),
+    (10000, 'Претендент на Трон'), (20000, 'Королевская Особа'), (50000, 'Император'),
 ]
 
 POWER_PER_THRESHOLD = 10
@@ -1027,26 +566,23 @@ def get_power_rank(power):
 
 def get_power(user_id):
     with db_cursor() as (_, c):
-        r = c.execute("SELECT soul_gems FROM users WHERE user_id=?", (user_id,)).fetchone()
+        r = c.execute("SELECT power FROM users WHERE user_id=?", (user_id,)).fetchone()
         return int(r[0]) if r else 0
 
 
 def update_power(user_id, amount):
     with db_cursor(True) as (_, c):
-        c.execute("UPDATE users SET soul_gems=soul_gems+? WHERE user_id=?", (amount, user_id))
+        c.execute("UPDATE users SET power=power+? WHERE user_id=?", (amount, user_id))
 
 
 def transfer_power(sender, target, amount):
     if amount <= 0 or sender == target:
         return False
     with db_cursor(True) as (_, c):
-        c.execute(
-            "UPDATE users SET soul_gems=soul_gems-? WHERE user_id=? AND soul_gems>=?",
-            (amount, sender, amount)
-        )
+        c.execute("UPDATE users SET power=power-? WHERE user_id=? AND power>=?", (amount, sender, amount))
         if c.rowcount != 1:
             return False
-        c.execute("UPDATE users SET soul_gems=soul_gems+? WHERE user_id=?", (amount, target))
+        c.execute("UPDATE users SET power=power+? WHERE user_id=?", (amount, target))
         return True
 
 
@@ -1058,10 +594,7 @@ def claim_power_for_messages(user_id):
         total = int(r[0] or 0)
         current_thresholds = total // MESSAGES_PER_THRESHOLD
 
-        r2 = c.execute(
-            "SELECT claimed_thresholds FROM power_message_rewards WHERE user_id=?",
-            (user_id,)
-        ).fetchone()
+        r2 = c.execute("SELECT claimed_thresholds FROM power_message_rewards WHERE user_id=?", (user_id,)).fetchone()
         claimed = int(r2[0]) if r2 else 0
 
         if current_thresholds <= claimed:
@@ -1070,15 +603,47 @@ def claim_power_for_messages(user_id):
         new_thresholds = current_thresholds - claimed
         reward = new_thresholds * POWER_PER_THRESHOLD
 
-        c.execute(
-            "UPDATE users SET soul_gems=soul_gems+? WHERE user_id=?",
-            (reward, user_id)
-        )
+        c.execute("UPDATE users SET power=power+? WHERE user_id=?", (reward, user_id))
         c.execute("""
             INSERT INTO power_message_rewards(user_id, claimed_thresholds) VALUES(?,?)
             ON CONFLICT(user_id) DO UPDATE SET claimed_thresholds=excluded.claimed_thresholds
         """, (user_id, current_thresholds))
         return reward
+
+
+# ============ КАМНИ ДУШИ (soul_gems) ============
+
+def get_gems(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT soul_gems FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return int(r[0]) if r else 0
+
+
+def update_gems(user_id, amount):
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET soul_gems=soul_gems+? WHERE user_id=?", (amount, user_id))
+
+
+def debit_gems(user_id, amount):
+    if amount <= 0:
+        return False
+    with db_cursor(True) as (_, c):
+        c.execute(
+            "UPDATE users SET soul_gems=soul_gems-? WHERE user_id=? AND soul_gems>=?",
+            (amount, user_id, amount)
+        )
+        return c.rowcount == 1
+
+
+def transfer_gems(sender, target, amount):
+    if amount <= 0 or sender == target:
+        return False
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET soul_gems=soul_gems-? WHERE user_id=? AND soul_gems>=?", (amount, sender, amount))
+        if c.rowcount != 1:
+            return False
+        c.execute("UPDATE users SET soul_gems=soul_gems+? WHERE user_id=?", (amount, target))
+        return True
 
 
 # ============ ДУЭЛИ ============
@@ -1089,19 +654,14 @@ def create_duel(challenger_id, opponent_id, peer_id, message_id):
             INSERT INTO duels(opponent_id, challenger_id, peer_id, message_id, created_at)
             VALUES(?,?,?,?,CURRENT_TIMESTAMP)
             ON CONFLICT(opponent_id) DO UPDATE SET
-                challenger_id=excluded.challenger_id,
-                peer_id=excluded.peer_id,
-                message_id=excluded.message_id,
-                created_at=excluded.created_at
+                challenger_id=excluded.challenger_id, peer_id=excluded.peer_id,
+                message_id=excluded.message_id, created_at=excluded.created_at
         """, (opponent_id, challenger_id, peer_id, message_id))
 
 
 def get_duel_for_opponent(opponent_id):
     with db_cursor() as (_, c):
-        return c.execute(
-            "SELECT challenger_id, opponent_id, peer_id, message_id FROM duels WHERE opponent_id=?",
-            (opponent_id,)
-        ).fetchone()
+        return c.execute("SELECT challenger_id, opponent_id, peer_id, message_id FROM duels WHERE opponent_id=?", (opponent_id,)).fetchone()
 
 
 def delete_duel(opponent_id):
@@ -1111,10 +671,7 @@ def delete_duel(opponent_id):
 
 def has_active_duel(user_id):
     with db_cursor() as (_, c):
-        r = c.execute(
-            "SELECT 1 FROM duels WHERE challenger_id=? OR opponent_id=? LIMIT 1",
-            (user_id, user_id)
-        ).fetchone()
+        r = c.execute("SELECT 1 FROM duels WHERE challenger_id=? OR opponent_id=? LIMIT 1", (user_id, user_id)).fetchone()
         return r is not None
 
 
@@ -1141,11 +698,8 @@ def is_chat_hidden(peer_id):
 def add_to_admin_blacklist(user_id, added_by):
     with db_cursor(True) as (_, c):
         c.execute("""
-            INSERT INTO admin_blacklist(user_id, added_by, added_at)
-            VALUES(?,?,CURRENT_TIMESTAMP)
-            ON CONFLICT(user_id) DO UPDATE SET
-                added_by=excluded.added_by,
-                added_at=excluded.added_at
+            INSERT INTO admin_blacklist(user_id, added_by, added_at) VALUES(?,?,CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET added_by=excluded.added_by, added_at=excluded.added_at
         """, (user_id, added_by))
 
 
@@ -1160,32 +714,21 @@ def is_in_admin_blacklist(user_id):
         return r is not None
 
 
-def get_admin_blacklist():
-    with db_cursor() as (_, c):
-        c.execute("SELECT user_id FROM admin_blacklist ORDER BY added_at DESC")
-        return [r[0] for r in c.fetchall()]
-
-
 # ============ ЗАЯВКИ ============
 
 def get_application(user_id):
     with db_cursor() as (_, c):
         r = c.execute(
             "SELECT user_id, state, current_step, answers, review_peer_id, review_msg_id, created_at, updated_at "
-            "FROM applications WHERE user_id=?",
-            (user_id,)
+            "FROM applications WHERE user_id=?", (user_id,)
         ).fetchone()
         if not r:
             return None
         return {
-            'user_id': r[0],
-            'state': r[1],
-            'current_step': r[2],
+            'user_id': r[0], 'state': r[1], 'current_step': r[2],
             'answers': json.loads(r[3] or '[]'),
-            'review_peer_id': r[4],
-            'review_msg_id': r[5],
-            'created_at': r[6],
-            'updated_at': r[7],
+            'review_peer_id': r[4], 'review_msg_id': r[5],
+            'created_at': r[6], 'updated_at': r[7],
         }
 
 
@@ -1196,18 +739,11 @@ def upsert_application(user_id, state, current_step=0, answers=None, review_peer
             INSERT INTO applications(user_id, state, current_step, answers, review_peer_id, review_msg_id, created_at, updated_at)
             VALUES(?,?,?,?,?,?,?,?)
             ON CONFLICT(user_id) DO UPDATE SET
-                state=excluded.state,
-                current_step=excluded.current_step,
-                answers=excluded.answers,
-                review_peer_id=excluded.review_peer_id,
-                review_msg_id=excluded.review_msg_id,
+                state=excluded.state, current_step=excluded.current_step, answers=excluded.answers,
+                review_peer_id=excluded.review_peer_id, review_msg_id=excluded.review_msg_id,
                 updated_at=excluded.updated_at
-        """, (
-            user_id, state, current_step,
-            json.dumps(answers or [], ensure_ascii=False),
-            review_peer_id, review_msg_id,
-            now, now
-        ))
+        """, (user_id, state, current_step, json.dumps(answers or [], ensure_ascii=False),
+              review_peer_id, review_msg_id, now, now))
 
 
 def delete_application(user_id):
@@ -1242,11 +778,7 @@ def get_application_cooldown(user_id):
 
 def get_chat_pin(peer_id):
     with db_cursor() as (_, c):
-        r = c.execute(
-            "SELECT conversation_message_id, message_id, updated_at FROM chat_pins WHERE peer_id=?",
-            (peer_id,)
-        ).fetchone()
-        return r
+        return c.execute("SELECT conversation_message_id, message_id, updated_at FROM chat_pins WHERE peer_id=?", (peer_id,)).fetchone()
 
 
 def set_chat_pin(peer_id, conversation_message_id=None, message_id=None):
@@ -1259,17 +791,6 @@ def set_chat_pin(peer_id, conversation_message_id=None, message_id=None):
                 message_id=COALESCE(excluded.message_id, chat_pins.message_id),
                 updated_at=CURRENT_TIMESTAMP
         """, (peer_id, conversation_message_id, message_id))
-
-
-def set_chat_pin_cmid(peer_id, cmid):
-    with db_cursor(True) as (_, c):
-        c.execute("""
-            INSERT INTO chat_pins(peer_id, conversation_message_id, updated_at)
-            VALUES(?,?,CURRENT_TIMESTAMP)
-            ON CONFLICT(peer_id) DO UPDATE SET
-                conversation_message_id=excluded.conversation_message_id,
-                updated_at=CURRENT_TIMESTAMP
-        """, (peer_id, cmid))
 
 
 def reset_chat_pin_cmid(peer_id):
@@ -1287,3 +808,53 @@ def set_salary(user_id, amount):
 def increment_work_days(user_id):
     with db_cursor(True) as (_, c):
         c.execute("UPDATE users SET work_days=work_days+1 WHERE user_id=?", (user_id,))
+
+
+# ============ АДМИНСКАЯ НЕДЕЛЬНАЯ СТАТИСТИКА ============
+
+def _week_key_moscow():
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo('Europe/Moscow'))
+    return (now.date() - timedelta(days=now.weekday())).isoformat()
+
+
+def add_admin_stat(user_id, field, amount=1):
+    if field not in ('messages', 'invites', 'reports', 'gems_awarded'):
+        return
+    week = _week_key_moscow()
+    with db_cursor(True) as (_, c):
+        c.execute(f"""
+            INSERT INTO admin_weekly_stats(user_id, week_key, {field})
+            VALUES(?,?,?)
+            ON CONFLICT(user_id, week_key) DO UPDATE SET {field} = {field} + excluded.{field}
+        """, (user_id, week, amount))
+
+
+def get_admin_week_stats(user_id):
+    week = _week_key_moscow()
+    with db_cursor() as (_, c):
+        r = c.execute("""
+            SELECT messages, invites, reports, gems_awarded
+            FROM admin_weekly_stats WHERE user_id=? AND week_key=?
+        """, (user_id, week)).fetchone()
+        if not r:
+            return {'messages': 0, 'invites': 0, 'reports': 0, 'gems_awarded': 0}
+        return {'messages': r[0], 'invites': r[1], 'reports': r[2], 'gems_awarded': r[3]}
+
+
+def get_all_admin_week_stats():
+    week = _week_key_moscow()
+    with db_cursor() as (_, c):
+        c.execute("SELECT user_id, messages, invites, reports, gems_awarded FROM admin_weekly_stats WHERE week_key=?", (week,))
+        return c.fetchall()
+
+
+def reset_admin_week_stats():
+    week = _week_key_moscow()
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM admin_weekly_stats WHERE week_key < ?", (week,))
+        
+def get_all_chats():
+    with db_cursor() as (_, c):
+        c.execute("SELECT peer_id, cleanup_enabled FROM chat_settings")
+        return c.fetchall()

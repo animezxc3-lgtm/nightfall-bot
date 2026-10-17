@@ -1,6 +1,7 @@
-"""Логика заявок на администратора."""
+"""Логика заявок на администратора + ожидание GIF/статуса."""
 import time
 import json
+import re
 from datetime import datetime, timedelta
 
 from config import (
@@ -11,7 +12,7 @@ from database import (
     get_application, upsert_application, delete_application,
     set_application_cooldown, get_application_cooldown,
     is_in_admin_blacklist, get_global_role,
-    db_cursor,
+    db_cursor, set_gif_link, set_status,
 )
 from keyboards import application_review_keyboard
 
@@ -34,6 +35,9 @@ _EMOJI_DIGITS = {
     '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
     '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣',
 }
+
+# Регулярка для проверки ссылки на документ VK
+_DOC_RE = re.compile(r'^https?://vk\.(?:com|ru)/doc-?\d+_\d+')
 
 
 def _num(n):
@@ -135,7 +139,55 @@ def start_application(user_id, vk):
 
 
 def handle_dm_message(user_id, text, vk):
+    """
+    Обрабатывает сообщения в ЛС бота.
+    Возвращает True, если сообщение обработано.
+    """
     app = get_application(user_id)
+
+    # ─── Ожидание GIF-ссылки ────────────────────────────
+    if app and app['state'] == 'await_gif':
+        text_clean = (text or '').strip()
+        if _DOC_RE.match(text_clean):
+            set_gif_link(user_id, text_clean)
+            delete_application(user_id)
+            vk.messages.send(
+                peer_id=user_id, random_id=0,
+                message='✅ GIF/видео сохранено в профиле.',
+                disable_mentions=True,
+            )
+        else:
+            vk.messages.send(
+                peer_id=user_id, random_id=0,
+                message=(
+                    '❌ Это не похоже на ссылку на документ VK.\n'
+                    'Пример: https://vk.com/doc-240896963_123456789\n\n'
+                    'Пришли ссылку ещё раз или напиши `лл отмена`.'
+                ),
+                disable_mentions=True,
+            )
+        return True
+
+    # ─── Ожидание статуса ───────────────────────────────
+    if app and app['state'] == 'await_status':
+        text_clean = (text or '').strip()[:60]
+        if text_clean:
+            set_status(user_id, text_clean)
+            delete_application(user_id)
+            vk.messages.send(
+                peer_id=user_id, random_id=0,
+                message=f'✅ Статус установлен: {text_clean}',
+                disable_mentions=True,
+            )
+        else:
+            vk.messages.send(
+                peer_id=user_id, random_id=0,
+                message='❌ Статус не может быть пустым. Пришли текст ещё раз.',
+                disable_mentions=True,
+            )
+        return True
+
+    # ─── Обычная заявка ─────────────────────────────────
     if not app or app['state'] != 'in_progress':
         return False
 
@@ -190,17 +242,17 @@ def handle_dm_message(user_id, text, vk):
 
 def cancel_application(user_id, vk):
     app = get_application(user_id)
-    if not app or app['state'] != 'in_progress':
+    if not app or app['state'] not in ('in_progress', 'await_gif', 'await_status'):
         vk.messages.send(
             peer_id=user_id, random_id=0,
-            message='У тебя нет активной заявки.',
+            message='У тебя нет активной заявки или покупки в ожидании.',
             disable_mentions=True,
         )
         return
     delete_application(user_id)
     vk.messages.send(
         peer_id=user_id, random_id=0,
-        message='Заявка отменена. Ты можешь подать новую командой `лл заявка`.',
+        message='Отменено. Ты можешь подать новую команду `лл заявка` или купить что-то в VIP-магазине.',
         disable_mentions=True,
     )
 

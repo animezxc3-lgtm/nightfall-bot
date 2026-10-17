@@ -3,7 +3,7 @@ from datetime import datetime,timedelta
 from zoneinfo import ZoneInfo
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll,VkBotEventType
-from config import TOKEN,GROUP_ID,CREATOR_ID,ALLOWED_IN_DM
+from config import TOKEN,GROUP_ID,CREATOR_ID,ALLOWED_IN_DM,REPORT_CHAT_ID
 from database import (
     migrate_database,user_exists,create_user,set_admin_level,ensure_chat,
     add_message_count,claim_power_for_messages,get_feature,record_chat_join,
@@ -17,6 +17,7 @@ from response_context import set_user
 from admin_commands import get_admin_level
 from applications import start_application, handle_dm_message, cancel_application
 from pin_manager import update_all_pins
+from weekly_report import send_weekly_report
 
 MOSCOW=ZoneInfo('Europe/Moscow')
 
@@ -45,43 +46,42 @@ def send_welcome(peer_id, user_id):
     try:
         vk.messages.send(**args)
     except Exception as e:
-        print(f'Не удалось отправить приветствие в беседе {peer_id}: {e}')
+        print(f'⚠️ Не удалось отправить приветствие в беседе {peer_id}: {e}')
 
 def scheduler():
     while True:
         target=next_sunday(21,0); time.sleep(max(1,(target-datetime.now(MOSCOW)).total_seconds()))
         try:
-            for result in run_cleanup(vk,CREATOR_ID,get_admin_level): print('🧹',result)
-        except Exception as e: print(f'Ошибка чистки: {e}')
+            for result in run_cleanup(vk,CREATOR_ID,get_admin_level):
+                pass
+        except Exception as e:
+            print(f'⚠️ Ошибка чистки: {e}')
+
+        try:
+            send_weekly_report(vk, REPORT_CHAT_ID)
+        except Exception as e:
+            print(f'⚠️ Ошибка созыва: {e}')
 
 print('⚡ Запуск бота...')
 vk_session=vk_api.VkApi(token=TOKEN); vk=vk_session.get_api(); longpoll=VkBotLongPoll(vk_session,GROUP_ID)
 migrate_database()
 
-# === СИНХРОНИЗАЦИЯ ЗАКРЕПОВ ПРИ ЗАПУСКЕ ===
 try:
-    print('📌 Проверяю актуальность закрепов...')
-    pin_results = update_all_pins(vk)
-    updated = sum(1 for _, status in pin_results if status == 'updated')
-    print(f'📌 Закрепы синхронизированы. Обновлено: {updated}')
+    update_all_pins(vk)
 except Exception as e:
-    print(f'Не удалось синхронизировать закрепы при запуске: {e}')
+    print(f'⚠️ Ошибка синхронизации закрепов: {e}')
 
 threading.Thread(target=scheduler,daemon=True).start()
 print('⚡ Бот готов.')
 
-# === ДЕДУПЛИКАЦИЯ СОБЫТИЙ ===
 processed_events = set()
 MAX_PROCESSED = 2000
 
-
 for event in longpoll.listen():
     try:
-        # Отсеиваем дубли по event_id
         event_id = getattr(event, 'event_id', None)
         if event_id is not None:
             if event_id in processed_events:
-                print(f'⚠️ Дубликат события {event_id} — пропуск.')
                 continue
             processed_events.add(event_id)
             if len(processed_events) > MAX_PROCESSED:
@@ -105,8 +105,8 @@ for event in longpoll.listen():
                     user_id=event_user_id,
                     peer_id=event_peer_id,
                 )
-            except Exception as answer_error:
-                print(f'Не удалось подтвердить callback VK: {answer_error}')
+            except Exception:
+                pass
             if cmd:
                 handle_button(cmd, event_user_id, event_peer_id, conversation_message_id, vk, payload)
             continue
@@ -117,7 +117,7 @@ for event in longpoll.listen():
                 info=vk.users.get(user_ids=uid)[0];create_user(uid,f"{info['first_name']} {info['last_name']}")
             if uid and peer:
                 if uid==CREATOR_ID:
-                    set_admin_level(peer,uid,6,'Лелуш ви Британия')
+                    set_admin_level(peer,uid,7,'Лелуш ви Британия')
                 if get_chat_join_date(peer, uid) is None:
                     record_chat_join(peer, uid)
                 send_welcome(peer, uid)
@@ -125,36 +125,30 @@ for event in longpoll.listen():
 
         if event.type!=VkBotEventType.MESSAGE_NEW:continue
         m=event.object.message; text=m.get('text','').strip();peer=m['peer_id'];uid=m['from_id'];is_chat=peer>2000000000
-        if is_chat:
-            print(f'🔎 PEER_ID={peer} | TEXT={text[:30]}')
         if uid<=0:continue
 
         action=m.get('action') or {}
         action_type=action.get('type') if isinstance(action,dict) else None
         member_id=action.get('member_id') if isinstance(action,dict) else None
 
-        # === АВТОКИК ПРИ ВЫХОДЕ ===
         if is_chat and action_type == 'chat_kick_user' and member_id:
             if member_id == uid:
                 if get_admin_level(member_id, peer) >= 1:
-                    print(f'⏭️ Выход админа: {member_id} из {peer} — не трогаем.')
                     continue
                 if is_twink(member_id):
-                    print(f'⏭️ Выход твинка: {member_id} из {peer} — не трогаем.')
                     continue
                 try:
                     vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=member_id)
-                    print(f'👢 Автокик после выхода: {member_id} из {peer}')
-                except Exception as e:
-                    print(f'Не удалось кикнуть после выхода: {e}')
+                except Exception:
+                    pass
                 try:
                     vk.messages.send(
                         peer_id=peer, random_id=0,
                         message='Империи нужны воистину верные люди.',
                         disable_mentions=True,
                     )
-                except Exception as e:
-                    print(f'Не удалось отправить сообщение о выходе: {e}')
+                except Exception:
+                    pass
                 continue
             continue
 
@@ -178,7 +172,6 @@ for event in longpoll.listen():
             except Exception:
                 create_user(uid,'Участник')
 
-        # ЛС
         if not is_chat:
             lowered = text.lower()
             if lowered.startswith('лл '):
@@ -194,7 +187,6 @@ for event in longpoll.listen():
                 continue
             continue
 
-        # Беседа
         ensure_chat(peer);add_message_count(uid,peer)
         claim_power_for_messages(uid)
         if get_feature(peer,'мут') and get_admin_level(uid,peer)==0:
@@ -205,4 +197,4 @@ for event in longpoll.listen():
             maybe_react(text, peer, vk)
         if text.lower().startswith('лл '):handle_command(text[3:].strip().lower(),uid,peer,vk,text)
     except Exception as e:
-        print(f'Ошибка обработки события: {e}')
+        print(f'⚠️ Ошибка обработки события: {e}')
