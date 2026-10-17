@@ -778,3 +778,18 @@ def get_all_admin_week_stats():
 def reset_admin_week_stats():
     week = _week_key_moscow()
     with db_cursor(True) as (_, c): c.execute("DELETE FROM admin_weekly_stats WHERE week_key < ?", (week,))
+
+# ============ СКРЫТЫЕ БЕСЕДЫ (ДЛЯ PIN_MANAGER) ============
+
+def is_chat_hidden(peer_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT 1 FROM hidden_chats WHERE peer_id=?", (peer_id,)).fetchone()
+        return r is not None
+
+def hide_chat(peer_id):
+    with db_cursor(True) as (_, c):
+        c.execute("INSERT INTO hidden_chats(peer_id) VALUES(?) ON CONFLICT(peer_id) DO NOTHING", (peer_id,))
+
+def unhide_chat(peer_id):
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM hidden_chats WHERE peer_id=?", (peer_id,))
