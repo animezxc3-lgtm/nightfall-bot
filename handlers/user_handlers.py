@@ -178,3 +178,6 @@ def get_activity(user_id):
         f'📆 За месяц: {s["month"]}\n'
         f'📈 За всё время: {s["total"]}'
     )
+def is_admin(user_id, peer_id=None):
+    from admin_commands import get_admin_level
+    return get_admin_level(user_id, peer_id) >= 1

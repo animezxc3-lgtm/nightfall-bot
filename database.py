@@ -858,3 +858,348 @@ def get_all_chats():
     with db_cursor() as (_, c):
         c.execute("SELECT peer_id, cleanup_enabled FROM chat_settings")
         return c.fetchall()
+
+def ensure_chat(peer_id):
+    with db_cursor(True) as (_, c):
+        c.execute(
+            "INSERT INTO chat_settings(peer_id) VALUES(?) ON CONFLICT(peer_id) DO NOTHING",
+            (peer_id,)
+        )
+
+def add_message_count(user_id, peer_id):
+    today = datetime.now().strftime("%Y-%m-%d")
+    with db_cursor(True) as (_, c):
+        # Статистика юзера
+        c.execute("""
+            INSERT INTO messages_stats(user_id, date, count) VALUES(?,?,1)
+            ON CONFLICT(user_id, date) DO UPDATE SET count = count + 1
+        """, (user_id, today))
+        
+        # Статистика беседы
+        c.execute("""
+            INSERT INTO chat_message_stats(peer_id, user_id, date, count) VALUES(?,?,?,1)
+            ON CONFLICT(peer_id, user_id, date) DO UPDATE SET count = count + 1
+        """, (peer_id, user_id, today))
+        
+        # Обновляем общее кол-во сообщений и дату последнего
+        c.execute(
+            "UPDATE users SET messages_total = messages_total + 1, last_message_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (user_id,)
+        )
+
+# ==========================================
+# БЛОК НЕДОСТАЮЩИХ ФУНКЦИЙ (ВСТАВИТЬ В КОНЕЦ database.py)
+# ==========================================
+
+def ensure_chat(peer_id):
+    with db_cursor(True) as (_, c):
+        c.execute(
+            "INSERT INTO chat_settings(peer_id) VALUES(?) ON CONFLICT(peer_id) DO NOTHING",
+            (peer_id,)
+        )
+
+def get_feature(peer_id, feature):
+    with db_cursor() as (_, c):
+        valid = {'cleanup', 'casino', 'mute', 'duel', 'broadcast'}
+        if feature not in valid:
+            return False
+        field = f"{feature}_enabled"
+        r = c.execute(f"SELECT {field} FROM chat_settings WHERE peer_id=?", (peer_id,)).fetchone()
+        return bool(r[0]) if r else False
+
+def toggle_feature(peer_id, feature):
+    ensure_chat(peer_id)
+    with db_cursor(True) as (_, c):
+        valid = {'cleanup', 'casino', 'mute', 'duel', 'broadcast'}
+        if feature not in valid:
+            return False
+        field = f"{feature}_enabled"
+        c.execute(f"UPDATE chat_settings SET {field} = NOT COALESCE({field}, 0) WHERE peer_id=?", (peer_id,))
+        r = c.execute(f"SELECT {field} FROM chat_settings WHERE peer_id=?", (peer_id,)).fetchone()
+        return bool(r[0]) if r else False
+
+def get_welcome_data(peer_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT welcome_message, welcome_photo FROM chat_settings WHERE peer_id=?", (peer_id,)).fetchone()
+        if r:
+            return r[0] or DEFAULT_WELCOME, r[1]
+        return DEFAULT_WELCOME, ''
+
+def set_welcome_message(peer_id, message, photo=''):
+    ensure_chat(peer_id)
+    with db_cursor(True) as (_, c):
+        c.execute(
+            "UPDATE chat_settings SET welcome_message=?, welcome_photo=? WHERE peer_id=?",
+            (message, photo, peer_id)
+        )
+
+def add_message_count(user_id, peer_id):
+    today = datetime.now().strftime("%Y-%m-%d")
+    with db_cursor(True) as (_, c):
+        c.execute("""
+            INSERT INTO messages_stats(user_id, date, count) VALUES(?,?,1)
+            ON CONFLICT(user_id, date) DO UPDATE SET count = count + 1
+        """, (user_id, today))
+        c.execute("""
+            INSERT INTO chat_message_stats(peer_id, user_id, date, count) VALUES(?,?,?,1)
+            ON CONFLICT(peer_id, user_id, date) DO UPDATE SET count = count + 1
+        """, (peer_id, user_id, today))
+        c.execute(
+            "UPDATE users SET messages_total = messages_total + 1, last_message_at = CURRENT_TIMESTAMP WHERE user_id=?",
+            (user_id,)
+        )
+
+def get_all_chats():
+    with db_cursor() as (_, c):
+        return c.execute("SELECT peer_id, cleanup_enabled FROM chat_settings").fetchall()
+
+def get_broadcast_chats():
+    with db_cursor() as (_, c):
+        return [r[0] for r in c.execute("SELECT peer_id FROM chat_settings WHERE broadcast_enabled=1").fetchall()]
+
+def get_chat_activity(peer_id):
+    today = datetime.now().strftime("%Y-%m-%d")
+    week_start = _week_start(datetime.now()).strftime("%Y-%m-%d")
+    month_start = _month_start(datetime.now()).strftime("%Y-%m-%d")
+    with db_cursor() as (_, c):
+        def _sum(condition):
+            q = f"SELECT SUM(count) FROM chat_message_stats WHERE peer_id=? AND {condition}"
+            r = c.execute(q, (peer_id,)).fetchone()
+            return r[0] if r and r[0] else 0
+        return {
+            'today': _sum("date = ?"),
+            'week': _sum("date >= ?"),
+            'month': _sum("date >= ?"),
+            'total': _sum("1=1")
+        }
+
+def get_warning_count(user_id, peer_id):
+    with db_cursor() as (_, c):
+        r = c.execute(
+            "SELECT COUNT(*) FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=0",
+            (user_id, peer_id)
+        ).fetchone()
+        return r[0] if r else 0
+
+def add_warning(user_id, peer_id, is_admin=False):
+    with db_cursor(True) as (_, c):
+        c.execute(
+            "INSERT INTO warning_events(user_id, peer_id, is_admin_warning) VALUES(?,?,?)",
+            (user_id, peer_id, 1 if is_admin else 0)
+        )
+        field = 'admin_warnings' if is_admin else 'warnings'
+        c.execute(f"UPDATE users SET {field} = {field} + 1 WHERE user_id=?", (user_id,))
+        r = c.execute(f"SELECT {field} FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return r[0] if r else 0
+
+def remove_warning(user_id, peer_id, is_admin=False):
+    with db_cursor(True) as (_, c):
+        r = c.execute(
+            "SELECT id FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=? ORDER BY id DESC LIMIT 1",
+            (user_id, peer_id, 1 if is_admin else 0)
+        ).fetchone()
+        if r:
+            c.execute("DELETE FROM warning_events WHERE id=?", (r[0],))
+            field = 'admin_warnings' if is_admin else 'warnings'
+            c.execute(f"UPDATE users SET {field} = MAX(0, {field} - 1) WHERE user_id=?", (user_id,))
+        field = 'admin_warnings' if is_admin else 'warnings'
+        r2 = c.execute(f"SELECT {field} FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return r2[0] if r2 else 0
+
+def clear_warnings(user_id, peer_id, is_admin=False):
+    with db_cursor(True) as (_, c):
+        c.execute(
+            "DELETE FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=?",
+            (user_id, peer_id, 1 if is_admin else 0)
+        )
+        field = 'admin_warnings' if is_admin else 'warnings'
+        c.execute(f"UPDATE users SET {field} = 0 WHERE user_id=?", (user_id,))
+
+def get_warning_stats(user_id, is_admin=False):
+    now = datetime.now()
+    week = _week_start(now).strftime("%Y-%m-%d")
+    month = _month_start(now).strftime("%Y-%m-%d")
+    flag = 1 if is_admin else 0
+    with db_cursor() as (_, c):
+        total = c.execute("SELECT COUNT(*) FROM warning_events WHERE user_id=? AND is_admin_warning=?", (user_id, flag)).fetchone()[0]
+        w = c.execute("SELECT COUNT(*) FROM warning_events WHERE user_id=? AND is_admin_warning=? AND created_at >= ?", (user_id, flag, week)).fetchone()[0]
+        m = c.execute("SELECT COUNT(*) FROM warning_events WHERE user_id=? AND is_admin_warning=? AND created_at >= ?", (user_id, flag, month)).fetchone()[0]
+        return {'total': total, 'week': w, 'month': m}
+
+def add_kick_event(user_id, peer_id, kicked_by):
+    with db_cursor(True) as (_, c):
+        c.execute("INSERT INTO kick_events(user_id, peer_id, kicked_by) VALUES(?,?,?)", (user_id, peer_id, kicked_by))
+
+def get_kick_stats(user_id):
+    now = datetime.now()
+    week = _week_start(now).strftime("%Y-%m-%d")
+    month = _month_start(now).strftime("%Y-%m-%d")
+    with db_cursor() as (_, c):
+        total = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=?", (user_id,)).fetchone()[0]
+        w = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND created_at >= ?", (user_id, week)).fetchone()[0]
+        m = c.execute("SELECT COUNT(*) FROM kick_events WHERE user_id=? AND created_at >= ?", (user_id, month)).fetchone()[0]
+        return {'total': total, 'week': w, 'month': m}
+
+def ban_user(user_id):
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET banned=1 WHERE user_id=?", (user_id,))
+
+def unban_user(user_id):
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET banned=0 WHERE user_id=?", (user_id,))
+
+def is_banned(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT banned FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return bool(r[0]) if r else False
+
+def get_banned_users():
+    with db_cursor() as (_, c):
+        return c.execute("SELECT user_id, name FROM users WHERE banned=1").fetchall()
+def transfer_coins(sender, target, amount):
+    if amount <= 0 or sender == target:
+        return False
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET coins=coins-? WHERE user_id=? AND coins>=?", (amount, sender, amount))
+        if c.rowcount != 1:
+            return False
+        c.execute("UPDATE users SET coins=coins+? WHERE user_id=?", (amount, target))
+        return True
+def get_power(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT power FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return int(r[0]) if r else 0
+
+def set_nickname(user_id, nickname):
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET nickname=? WHERE user_id=?", (nickname, user_id))
+
+def get_messages_stats(user_id):
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    week = _week_start(now).strftime("%Y-%m-%d")
+    month = _month_start(now).strftime("%Y-%m-%d")
+    with db_cursor() as (_, c):
+        def _sum(cond, params):
+            r = c.execute(f"SELECT SUM(count) FROM messages_stats WHERE user_id=? AND {cond}", (user_id, *params)).fetchone()
+            return r[0] if r and r[0] else 0
+        
+        total = c.execute("SELECT messages_total FROM users WHERE user_id=?", (user_id,)).fetchone()
+        total = total[0] if total else 0
+        
+        return {
+            'today': _sum("date = ?", (today,)),
+            'week': _sum("date >= ?", (week,)),
+            'month': _sum("date >= ?", (month,)),
+            'total': total
+        }
+
+def get_property_value(user_id, category):
+    field = {'housing': 'housing', 'car': 'car', 'phone': 'phone'}.get(category)
+    if not field:
+        return 'Отсутствует'
+    with db_cursor() as (_, c):
+        r = c.execute(f"SELECT {field} FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return r[0] if r else 'Отсутствует'
+
+def purchase_property(user_id, category, item_name, price):
+    field = {'housing': 'housing', 'car': 'car', 'phone': 'phone'}.get(category)
+    if not field:
+        return False
+    with db_cursor(True) as (_, c):
+        c.execute(f"UPDATE users SET {field}=?, coins=coins-? WHERE user_id=? AND coins>=?", (item_name, price, user_id, price))
+        return c.rowcount == 1
+def set_salary_multiplier(user_id, multiplier):
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE users SET salary_multiplier=? WHERE user_id=?", (multiplier, user_id))
+        return multiplier
+
+def update_job_field(user_id, field, value):
+    with db_cursor(True) as (_, c):
+        valid = {'job_name', 'level', 'exp', 'last_work'}
+        if field not in valid:
+            return
+        col = 'job' if field == 'job_name' else field
+        c.execute(f"UPDATE users SET {col}=? WHERE user_id=?", (value, user_id))
+
+def get_duel_for_opponent(opponent_id):
+    with db_cursor() as (_, c):
+        return c.execute("SELECT challenger_id, opponent_id, peer_id, message_id FROM duels WHERE opponent_id=?", (opponent_id,)).fetchone()
+
+def create_duel(challenger_id, opponent_id, peer_id, message_id):
+    with db_cursor(True) as (_, c):
+        c.execute("""
+            INSERT INTO duels(opponent_id, challenger_id, peer_id, message_id, created_at)
+            VALUES(?,?,?,?,CURRENT_TIMESTAMP)
+            ON CONFLICT(opponent_id) DO UPDATE SET
+                challenger_id=excluded.challenger_id, peer_id=excluded.peer_id,
+                message_id=excluded.message_id, created_at=excluded.created_at
+        """, (opponent_id, challenger_id, peer_id, message_id))
+
+def has_active_duel(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT 1 FROM duels WHERE challenger_id=? OR opponent_id=? LIMIT 1", (user_id, user_id)).fetchone()
+        return r is not None
+
+def delete_duel(opponent_id):
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM duels WHERE opponent_id=?", (opponent_id,))
+
+def get_chat_user_week_messages(peer_id, user_id, start_date, end_date):
+    with db_cursor() as (_, c):
+        r = c.execute("""
+            SELECT SUM(count) FROM chat_message_stats 
+            WHERE peer_id=? AND user_id=? AND date >= ? AND date <= ?
+        """, (peer_id, user_id, start_date, end_date)).fetchone()
+        return r[0] if r and r[0] else 0
+
+def get_application(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("""
+            SELECT user_id, state, current_step, answers, review_peer_id, review_msg_id, created_at, updated_at
+            FROM applications WHERE user_id=?
+        """, (user_id,)).fetchone()
+        if not r:
+            return None
+        return {
+            'user_id': r[0], 'state': r[1], 'current_step': r[2],
+            'answers': json.loads(r[3] or '[]'), 'review_peer_id': r[4],
+            'review_msg_id': r[5], 'created_at': r[6], 'updated_at': r[7]
+        }
+
+def upsert_application(user_id, state, current_step=0, answers=None, review_peer_id=None, review_msg_id=None):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c):
+        c.execute("""
+            INSERT INTO applications(user_id, state, current_step, answers, review_peer_id, review_msg_id, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                state=excluded.state, current_step=excluded.current_step, answers=excluded.answers,
+                review_peer_id=excluded.review_peer_id, review_msg_id=excluded.review_msg_id,
+                updated_at=excluded.updated_at
+        """, (user_id, state, current_step, json.dumps(answers or [], ensure_ascii=False), review_peer_id, review_msg_id, now, now))
+
+def delete_application(user_id):
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM applications WHERE user_id=?", (user_id,))
+
+def set_application_cooldown(user_id, days=3):
+    until = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c):
+        c.execute("""
+            INSERT INTO application_cooldowns(user_id, until_ts) VALUES(?,?)
+            ON CONFLICT(user_id) DO UPDATE SET until_ts=excluded.until_ts
+        """, (user_id, until))
+
+def get_application_cooldown(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT until_ts FROM application_cooldowns WHERE user_id=?", (user_id,)).fetchone()
+        if not r:
+            return None
+        try:
+            until = datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+        if until <= datetime.now():
+            return None
+        return until

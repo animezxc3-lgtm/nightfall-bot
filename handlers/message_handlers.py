@@ -19,7 +19,6 @@ from handlers.user_handlers import (
     get_profile,
     get_profile_data,
     get_balance,
-    set_nickname_command,
     get_activity,
     is_admin,
 )
