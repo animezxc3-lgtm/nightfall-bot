@@ -127,7 +127,6 @@ def handle_command(command, user_id, peer_id, vk, text):
         if not price:
             return
 
-        # Проверка на кап множителя
         if n == 4 and _check_salary_mult_cap(user_id):
             _send(vk, peer_id, 'Множитель уже максимальный (×7).', exclude_actor=True)
             return
@@ -158,9 +157,6 @@ def handle_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, f'Множитель зарплаты повышен. Теперь ×{new_mult}.', exclude_actor=True)
             return
         return
-
-    # ─── Ожидание GIF/статуса (в ЛС) ────────────────────
-    # (обрабатывается в main.py через handle_dm_message)
 
     # ─── ПРОФИЛЬ ────────────────────────────────────────
     if command == 'профиль' or command.startswith('профиль '):
@@ -633,9 +629,9 @@ def handle_command(command, user_id, peer_id, vk, text):
 
 def handle_norma(command, user_id, peer_id, vk):
     """
-    лл норма + [@user] — поставить норму сдана
-    лл норма - [@user] — поставить норму не сдана
-    Без @user — пользователь ставит себе, но бот проверяет по факту.
+    лл норма + @user — поставить норму сдана (только ЗК и выше)
+    лл норма - @user — поставить норму не сдана (только ЗК и выше)
+    Себе поставить норму нельзя!
     """
     parts = command.split()
     if len(parts) < 2:
@@ -647,42 +643,31 @@ def handle_norma(command, user_id, peer_id, vk):
 
     actor_level = get_admin_level(user_id, peer_id)
 
-    # Если указан @user — это админ ставит другому
-    if len(parts) >= 3:
-        if actor_level < 4:
-            _send(vk, peer_id, 'Недостаточно прав (нужен ЗК и выше).', exclude_actor=True)
-            return
-
-        target = _target(parts[2])
-        if not target:
-            return
-        if not get_user(target):
-            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
-            return
-
-        if sign == '+':
-            add_admin_stat(target, 'reports', 1)
-            _send(vk, peer_id, f'✅ Норма сдана для {_user_link(vk, target)}.', exclude_actor=True)
-        else:
-            _send(vk, peer_id, f'❌ Норма НЕ сдана для {_user_link(vk, target)}.', exclude_actor=True)
+    # Только ЗК (4) и выше могут ставить нормы
+    if actor_level < 4:
+        _send(vk, peer_id, '❌ Недостаточно прав. Выдавать/забирать норму могут только ЗК (Заместитель Куратора) и выше.', exclude_actor=True)
         return
 
-    # Без @user — сам себе
-    if actor_level < 2:
-        _send(vk, peer_id, 'Только для администраторов (Активист и выше).', exclude_actor=True)
+    # Обязательно должен быть указан пользователь
+    if len(parts) < 3:
+        _send(vk, peer_id, '❌ Нельзя ставить норму самому себе. Укажи пользователя: `лл норма + @user`', exclude_actor=True)
         return
 
-    # Бот проверяет факт: пользователь должен был сдать норму (сообщения/добавления)
-    from weekly_report import check_user_norma
-    ok, reason = check_user_norma(user_id)
+    target = _target(parts[2])
+    if not target:
+        return
+    if not get_user(target):
+        _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
+        return
+
+    # Проверяем, что у цели есть админка (от Активиста и выше)
+    target_level = get_admin_level(target, peer_id)
+    if target_level < 2:
+        _send(vk, peer_id, f'❌ {_user_link(vk, target)} не является администратором (минимум Активист).', exclude_actor=True)
+        return
 
     if sign == '+':
-        if not ok:
-            _send(vk, peer_id,
-                  f'❌ Ты не можешь поставить себе «+»: {reason}',
-                  exclude_actor=True)
-            return
-        add_admin_stat(user_id, 'reports', 1)
-        _send(vk, peer_id, f'✅ Норма сдана для {_user_link(vk, user_id)}.', exclude_actor=True)
+        add_admin_stat(target, 'reports', 1)
+        _send(vk, peer_id, f'✅ Норма сдана для {_user_link(vk, target)}.', exclude_actor=True)
     else:
-        _send(vk, peer_id, f'❌ Норма НЕ сдана для {_user_link(vk, user_id)}.', exclude_actor=True)
+        _send(vk, peer_id, f'❌ Норма НЕ сдана для {_user_link(vk, target)}.', exclude_actor=True)

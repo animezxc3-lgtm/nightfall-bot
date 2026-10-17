@@ -233,7 +233,8 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл устроиться\n'
             'лл работать\n'
             'лл уволиться\n'
-            'лл работа [@user]',
+            'лл работа [@user]\n\n'
+            '💡 Множитель зарплаты можно повысить в VIP-магазине.',
             menu_keyboard(is_admin),
         )
         return
@@ -272,9 +273,13 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл админы\n'
             'лл проверить @user\n'
             'лл снять @user\n'
-            'лл выдать права @user <уровень> <номер_беседы>\n'
+            'лл выдать права @user <номер_беседы> <должность>\n'
             'лл чс адм @user\n'
             'лл убрать чс адм @user\n'
+            '\n'
+            '📊 НОРМЫ И ОТЧЁТЫ:\n'
+            'лл норма + @user (только ЗК и выше)\n'
+            'лл норма - @user (только ЗК и выше)\n'
             '\n'
             '👥 ТВИНКИ:\n'
             'лл твинк @user\n'
