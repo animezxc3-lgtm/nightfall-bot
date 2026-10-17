@@ -68,6 +68,7 @@ def build_pin_text(vk, peer_id):
     seen = set()
 
     # 1. ГЛОБАЛЬНЫЕ РОЛИ (7 - Лелуш, 6 - Вершитель)
+    # Берем ВСЕХ, у кого есть глобальная роль
     for uid, level in get_all_global_roles():
         if uid in seen:
             continue
@@ -75,7 +76,7 @@ def build_pin_text(vk, peer_id):
             roles[level].append(uid)
             seen.add(uid)
 
-    # Если создатель не был добавлен (его нет в БД), добавляем принудительно на 7 уровень
+    # Если твой CREATOR_ID не был добавлен (например, его стерли из БД), добавляем принудительно
     if CREATOR_ID not in seen:
         roles[7].append(CREATOR_ID)
         seen.add(CREATOR_ID)
@@ -103,7 +104,7 @@ def build_pin_text(vk, peer_id):
         '',
     ]
 
-    # ─── ГЛОБАЛЬНЫЕ РОЛИ ───
+    # ─── ГЛОБАЛЬНЫЕ РОЛИ (ВСЕГДА ВЫВОДИМ) ───
     global_roles = [
         (7, '👑', 'Лелуш ви Британия'),
         (6, '⚖', 'Вершитель правосудия'),
