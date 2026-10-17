@@ -7,7 +7,6 @@ from database import (
 
 POWER_PER_WORK = 15
 
-
 def work(user_id, *_):
     """Возвращает (text, promoted_text_or_None)."""
     user = get_user(user_id)
@@ -33,7 +32,7 @@ def work(user_id, *_):
 
     set_salary(user_id, salary)
     update_coins(user_id, salary)
-    update_power(user_id, POWER_PER_WORK)
+    update_power(user_id, POWER_PER_WORK) # Начисляем Силу Гиаса
 
     exp += 1
     new_level = level
@@ -59,10 +58,11 @@ def work(user_id, *_):
 
 
 def hire(user_id, profession_key, *_):
+    """Устройство на работу."""
     user = get_user(user_id)
     if not user:
         return 'Профиль не найден.'
-    # 6 — job
+    
     if user[6] != 'Отсутствует' and user[6] in PROFESSIONS:
         return f'Ты уже работаешь: {PROFESSIONS[user[6]]["name"]}. Сначала используй `лл уволиться`.'
     if profession_key not in PROFESSIONS:
@@ -77,10 +77,11 @@ def hire(user_id, profession_key, *_):
 
 
 def fire(user_id, *_):
+    """Увольнение с работы."""
     user = get_user(user_id)
     if not user:
         return 'Профиль не найден.'
-    # 6 — job
+    
     if user[6] == 'Отсутствует' or user[6] not in PROFESSIONS:
         return 'Ты и так безработный.'
 
