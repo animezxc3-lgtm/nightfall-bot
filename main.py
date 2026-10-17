@@ -1,13 +1,13 @@
-import json,threading,time
-from datetime import datetime,timedelta
+import json, threading, time
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import vk_api
-from vk_api.bot_longpoll import VkBotLongPoll,VkBotEventType
-from config import TOKEN,GROUP_ID,CREATOR_ID,ALLOWED_IN_DM,REPORT_CHAT_ID
+from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
+from config import TOKEN, GROUP_ID, CREATOR_ID, ALLOWED_IN_DM, REPORT_CHAT_ID
 from database import (
-    migrate_database,user_exists,create_user,set_admin_level,ensure_chat,
-    add_message_count,claim_power_for_messages,get_feature,record_chat_join,
-    get_chat_join_date,get_welcome_data,is_twink,get_owner
+    migrate_database, user_exists, create_user, set_admin_level, ensure_chat,
+    add_message_count, claim_power_for_messages, get_feature, record_chat_join,
+    get_chat_join_date, get_welcome_data, is_twink, get_owner
 )
 from handlers.message_handlers import handle_command
 from handlers.button_handlers import handle_button
@@ -19,11 +19,14 @@ from applications import start_application, handle_dm_message, cancel_applicatio
 from pin_manager import update_all_pins
 from weekly_report import send_weekly_report
 
-MOSCOW=ZoneInfo('Europe/Moscow')
+MOSCOW = ZoneInfo('Europe/Moscow')
 
-def next_sunday(hour,minute):
-    now=datetime.now(MOSCOW); days=(6-now.weekday())%7; t=(now+timedelta(days=days)).replace(hour=hour,minute=minute,second=0,microsecond=0)
-    if t<=now:t+=timedelta(days=7)
+def next_sunday(hour, minute):
+    now = datetime.now(MOSCOW)
+    days = (6 - now.weekday()) % 7
+    t = (now + timedelta(days=days)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if t <= now:
+        t += timedelta(days=7)
     return t
 
 def _obj_get(obj, key, default=None):
@@ -33,16 +36,16 @@ def _obj_get(obj, key, default=None):
 
 def send_welcome(peer_id, user_id):
     try:
-        info=vk.users.get(user_ids=user_id)[0]
-        name=f"{info.get('first_name','')} {info.get('last_name','')}".strip() or 'участник'
+        info = vk.users.get(user_ids=user_id)[0]
+        name = f"{info.get('first_name','')} {info.get('last_name','')}".strip() or 'участник'
     except Exception:
-        name='участник'
+        name = 'участник'
     welcome, photo = get_welcome_data(peer_id)
-    text=welcome.replace('{name}', name).replace('{id}', str(user_id))
-    text=text.replace('{profile}', f'https://vk.com/id{user_id}')
-    args={'peer_id':peer_id,'random_id':0,'message':text}
+    text = welcome.replace('{name}', name).replace('{id}', str(user_id))
+    text = text.replace('{profile}', f'https://vk.com/id{user_id}')
+    args = {'peer_id': peer_id, 'random_id': 0, 'message': text}
     if photo:
-        args['attachment']=photo
+        args['attachment'] = photo
     try:
         vk.messages.send(**args)
     except Exception as e:
@@ -50,9 +53,10 @@ def send_welcome(peer_id, user_id):
 
 def scheduler():
     while True:
-        target=next_sunday(21,0); time.sleep(max(1,(target-datetime.now(MOSCOW)).total_seconds()))
+        target = next_sunday(21, 0)
+        time.sleep(max(1, (target - datetime.now(MOSCOW)).total_seconds()))
         try:
-            for result in run_cleanup(vk,CREATOR_ID,get_admin_level):
+            for result in run_cleanup(vk, CREATOR_ID, get_admin_level):
                 pass
         except Exception as e:
             print(f'⚠️ Ошибка чистки: {e}')
@@ -63,7 +67,9 @@ def scheduler():
             print(f'⚠️ Ошибка созыва: {e}')
 
 print('⚡ Запуск бота...')
-vk_session=vk_api.VkApi(token=TOKEN); vk=vk_session.get_api(); longpoll=VkBotLongPoll(vk_session,GROUP_ID)
+vk_session = vk_api.VkApi(token=TOKEN)
+vk = vk_session.get_api()
+longpoll = VkBotLongPoll(vk_session, GROUP_ID)
 migrate_database()
 
 try:
@@ -71,7 +77,7 @@ try:
 except Exception as e:
     print(f'⚠️ Ошибка синхронизации закрепов: {e}')
 
-threading.Thread(target=scheduler,daemon=True).start()
+threading.Thread(target=scheduler, daemon=True).start()
 print('⚡ Бот готов.')
 
 processed_events = set()
@@ -87,6 +93,7 @@ for event in longpoll.listen():
             if len(processed_events) > MAX_PROCESSED:
                 processed_events.clear()
 
+        # --- КНОПКИ ---
         if event.type == VkBotEventType.MESSAGE_EVENT:
             obj = event.object
             raw_payload = _obj_get(obj, 'payload', '{}')
@@ -111,26 +118,40 @@ for event in longpoll.listen():
                 handle_button(cmd, event_user_id, event_peer_id, conversation_message_id, vk, payload)
             continue
 
-        if event.type==VkBotEventType.GROUP_JOIN:
-            obj=event.object;uid=_obj_get(obj,'user_id');peer=_obj_get(obj,'peer_id')
+        # --- ВСТУПЛЕНИЕ В БЕСЕДУ ---
+        if event.type == VkBotEventType.GROUP_JOIN:
+            obj = event.object
+            uid = _obj_get(obj, 'user_id')
+            peer = _obj_get(obj, 'peer_id')
             if uid and not user_exists(uid):
-                info=vk.users.get(user_ids=uid)[0];create_user(uid,f"{info['first_name']} {info['last_name']}")
+                info = vk.users.get(user_ids=uid)[0]
+                create_user(uid, f"{info['first_name']} {info['last_name']}")
             if uid and peer:
-                if uid==CREATOR_ID:
-                    set_admin_level(peer,uid,7,'Лелуш ви Британия')
+                if uid == CREATOR_ID:
+                    set_admin_level(peer, uid, 7, 'Лелуш ви Британия')
                 if get_chat_join_date(peer, uid) is None:
                     record_chat_join(peer, uid)
                 send_welcome(peer, uid)
             continue
 
-        if event.type!=VkBotEventType.MESSAGE_NEW:continue
-        m=event.object.message; text=m.get('text','').strip();peer=m['peer_id'];uid=m['from_id'];is_chat=peer>2000000000
-        if uid<=0:continue
+        # --- СООБЩЕНИЯ ---
+        if event.type != VkBotEventType.MESSAGE_NEW:
+            continue
+            
+        m = event.object.message
+        text = m.get('text', '').strip()
+        peer = m['peer_id']
+        uid = m['from_id']
+        is_chat = peer > 2000000000
+        
+        if uid <= 0:
+            continue
 
-        action=m.get('action') or {}
-        action_type=action.get('type') if isinstance(action,dict) else None
-        member_id=action.get('member_id') if isinstance(action,dict) else None
+        action = m.get('action') or {}
+        action_type = action.get('type') if isinstance(action, dict) else None
+        member_id = action.get('member_id') if isinstance(action, dict) else None
 
+        # --- ВЫХОД ИЗ БЕСЕДЫ (авто-кик) ---
         if is_chat and action_type == 'chat_kick_user' and member_id:
             if member_id == uid:
                 if get_admin_level(member_id, peer) >= 1:
@@ -152,26 +173,29 @@ for event in longpoll.listen():
                 continue
             continue
 
-        invited_uid=action.get('member_id') if isinstance(action,dict) else None
-        if is_chat and action_type in ('chat_invite_user','chat_invite_user_by_link') and invited_uid:
+        # --- ВХОД В БЕСЕДУ ---
+        invited_uid = action.get('member_id') if isinstance(action, dict) else None
+        if is_chat and action_type in ('chat_invite_user', 'chat_invite_user_by_link') and invited_uid:
             if not user_exists(invited_uid):
                 try:
-                    info=vk.users.get(user_ids=invited_uid)[0]
-                    create_user(invited_uid,f"{info['first_name']} {info['last_name']}")
+                    info = vk.users.get(user_ids=invited_uid)[0]
+                    create_user(invited_uid, f"{info['first_name']} {info['last_name']}")
                 except Exception:
-                    create_user(invited_uid,'Участник')
+                    create_user(invited_uid, 'Участник')
             ensure_chat(peer)
-            if get_chat_join_date(peer,invited_uid) is None:
-                record_chat_join(peer,invited_uid, invited_by=uid)
-            send_welcome(peer,invited_uid)
+            if get_chat_join_date(peer, invited_uid) is None:
+                record_chat_join(peer, invited_uid, invited_by=uid)
+            send_welcome(peer, invited_uid)
             continue
 
         if not user_exists(uid):
             try:
-                info=vk.users.get(user_ids=uid)[0];create_user(uid,f"{info['first_name']} {info['last_name']}")
+                info = vk.users.get(user_ids=uid)[0]
+                create_user(uid, f"{info['first_name']} {info['last_name']}")
             except Exception:
-                create_user(uid,'Участник')
+                create_user(uid, 'Участник')
 
+        # --- ЛИЧНЫЕ СООБЩЕНИЯ ---
         if not is_chat:
             lowered = text.lower()
             if lowered.startswith('лл '):
@@ -183,18 +207,31 @@ for event in longpoll.listen():
                 if command == 'отмена':
                     cancel_application(uid, vk)
                     continue
+            # Обработка состояний заявки и покупок в ЛС
             if handle_dm_message(uid, text, vk):
                 continue
             continue
 
-        ensure_chat(peer);add_message_count(uid,peer)
+        # --- СООБЩЕНИЯ В БЕСЕДЕ ---
+        ensure_chat(peer)
+        add_message_count(uid, peer)
         claim_power_for_messages(uid)
-        if get_feature(peer,'мут') and get_admin_level(uid,peer)==0:
-            try:vk.messages.delete(peer_id=peer,conversation_message_ids=m.get('conversation_message_id'),delete_for_all=True)
-            except Exception:pass
+        
+        # Мут
+        if get_feature(peer, 'мут') and get_admin_level(uid, peer) == 0:
+            try:
+                vk.messages.delete(peer_id=peer, conversation_message_ids=m.get('conversation_message_id'), delete_for_all=True)
+            except Exception:
+                pass
             continue
+            
+        # Реакции на слова
         if not text.lower().startswith('лл'):
             maybe_react(text, peer, vk)
-        if text.lower().startswith('лл '):handle_command(text[3:].strip().lower(),uid,peer,vk,text)
+            
+        # Обработка команд
+        if text.lower().startswith('лл '):
+            handle_command(text[3:].strip().lower(), uid, peer, vk, text)
+            
     except Exception as e:
         print(f'⚠️ Ошибка обработки события: {e}')
