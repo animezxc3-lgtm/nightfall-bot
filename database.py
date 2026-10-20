@@ -652,20 +652,28 @@ def get_all_global_roles():
 
 def set_admin_level(peer_id, user_id, level, role_name):
     with db_cursor(True) as (_, c):
-        # Сначала удаляем старую запись, чтобы не было конфликтов
-        c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
-        if level > 0:
-            c.execute(
-                "INSERT INTO admin_chat_rights(peer_id, user_id, level) VALUES(?,?,?)",
-                (peer_id, user_id, level)
-            )
+        # Принудительно делаем из level число
+        try:
+            lvl = int(level)
+        except (ValueError, TypeError):
+            lvl = 0
+            
+        if lvl <= 0:
+            c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
+        else:
+            c.execute("""
+                INSERT INTO admin_chat_rights(peer_id, user_id, level) 
+                VALUES(?,?,?)
+                ON CONFLICT(peer_id, user_id) DO UPDATE SET level=excluded.level
+            """, (peer_id, user_id, lvl))
+
 def get_admin_level_for_chat(peer_id, user_id):
     with db_cursor() as (_, c):
-        r = c.execute(
-            "SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?", 
-            (peer_id, user_id)
-        ).fetchone()
-        return int(r[0]) if r else 0
+        try:
+            r = c.execute("SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id)).fetchone()
+            return int(r[0]) if r and r[0] is not None else 0
+        except Exception:
+            return 0 # Если база сломана - не роняем бота
     
 def get_admins_for_chat(peer_id):
     with db_cursor() as (_, c): return c.execute("SELECT user_id, level FROM admin_chat_rights WHERE peer_id=? AND level>0 ORDER BY level DESC", (peer_id,)).fetchall()

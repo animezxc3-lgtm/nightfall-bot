@@ -41,18 +41,18 @@ COMMAND_MIN_LEVEL = {
 
 
 def get_admin_level(user_id, peer_id=None):
-    # 1. Ты (создатель) всегда 7
-    if user_id == CREATOR_ID:
-        return 7
-    # 2. Глобальные (Вершитель - 6, Лелуш - 7)
-    g = get_global_role(user_id)
-    if g > 0:
-        return g
-    # 3. Локальные (Куратор 5, ЗК 4 и т.д.)
-    if peer_id and peer_id > 2000000000:
-        l = get_admin_level_for_chat(peer_id, user_id)
-        if l > 0:
-            return l
+    try:
+        if user_id == CREATOR_ID:
+            return 7
+        g = get_global_role(user_id)
+        if g and g > 0:
+            return int(g)
+        if peer_id and peer_id > 2000000000:
+            l = get_admin_level_for_chat(peer_id, user_id)
+            if l and l > 0:
+                return int(l)
+    except Exception as e:
+        print(f'⚠️ Ошибка чтения прав: {e}')
     return 0
 
 
