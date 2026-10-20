@@ -116,6 +116,10 @@ def set_admin_level(peer_id, user_id, level, role_name):
         if lvl <= 0: c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
         else: c.execute("INSERT INTO admin_chat_rights(peer_id,user_id,level) VALUES(?,?,?) ON CONFLICT(peer_id,user_id) DO UPDATE SET level=excluded.level", (peer_id, user_id, lvl))
 
+def get_admins_for_chat(peer_id):
+    with db_cursor() as (_, c):
+        return c.execute("SELECT user_id, level FROM admin_chat_rights WHERE peer_id=? AND level>0 ORDER BY level DESC", (peer_id,)).fetchall()
+
 def get_global_role(user_id):
     with db_cursor() as (_, c):
         r = c.execute("SELECT level FROM global_roles WHERE user_id=?", (user_id,)).fetchone()
@@ -517,34 +521,22 @@ def get_application_cooldown(user_id):
         except Exception: return None
         return until if until > datetime.now() else None
 
-#ДУЭЛИ
+def create_duel(challenger_id, opponent_id, peer_id, message_id):
+    with db_cursor(True) as (_, c):
+        c.execute("INSERT INTO duels(opponent_id, challenger_id, peer_id, message_id, created_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(opponent_id) DO UPDATE SET challenger_id=excluded.challenger_id, peer_id=excluded.peer_id, message_id=excluded.message_id, created_at=excluded.created_at", (opponent_id, challenger_id, peer_id, message_id))
+
+def get_duel_for_opponent(opponent_id):
+    with db_cursor() as (_, c): return c.execute("SELECT challenger_id, opponent_id, peer_id, message_id FROM duels WHERE opponent_id=?", (opponent_id,)).fetchone()
+
+def delete_duel(opponent_id):
+    with db_cursor(True) as (_, c): c.execute("DELETE FROM duels WHERE opponent_id=?", (opponent_id,))
+
 def has_active_duel(user_id):
     with db_cursor() as (_, c):
         r = c.execute("SELECT 1 FROM duels WHERE challenger_id=? OR opponent_id=? LIMIT 1", (user_id, user_id)).fetchone()
         return r is not None
 
-def create_duel(challenger_id, opponent_id, peer_id, message_id):
-    with db_cursor(True) as (_, c):
-        c.execute("""
-            INSERT INTO duels(opponent_id, challenger_id, peer_id, message_id, created_at)
-            VALUES(?,?,?,?,CURRENT_TIMESTAMP)
-            ON CONFLICT(opponent_id) DO UPDATE SET
-                challenger_id=excluded.challenger_id, peer_id=excluded.peer_id,
-                message_id=excluded.message_id, created_at=excluded.created_at
-        """, (opponent_id, challenger_id, peer_id, message_id))
-
-def get_duel_for_opponent(opponent_id):
-    with db_cursor() as (_, c):
-        return c.execute("SELECT challenger_id, opponent_id, peer_id, message_id FROM duels WHERE opponent_id=?", (opponent_id,)).fetchone()
-
-def delete_duel(opponent_id):
-    with db_cursor(True) as (_, c):
-        c.execute("DELETE FROM duels WHERE opponent_id=?", (opponent_id,))
-
 def get_chat_user_week_messages(peer_id, user_id, start_date, end_date):
     with db_cursor() as (_, c):
-        r = c.execute("""
-            SELECT SUM(count) FROM chat_message_stats 
-            WHERE peer_id=? AND user_id=? AND date >= ? AND date <= ?
-        """, (peer_id, user_id, start_date, end_date)).fetchone()
+        r = c.execute("SELECT SUM(count) FROM chat_message_stats WHERE peer_id=? AND user_id=? AND date >= ? AND date <= ?", (peer_id, user_id, start_date, end_date)).fetchone()
         return r[0] if r and r[0] else 0
