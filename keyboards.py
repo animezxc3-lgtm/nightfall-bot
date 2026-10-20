@@ -31,15 +31,18 @@ def back_to_menu_keyboard(is_admin=False):
 def MAIN_MENU(is_admin=False):
     return menu_keyboard(is_admin)
 
-
-SHOP_MENU = {
-    'inline': True,
-    'buttons': [
+def get_shop_menu(is_admin=False):
+    buttons = [
         [_btn('🏠 Жильё', 'shop_category', category='housing'),
          _btn('🚗 Автомобили', 'shop_category', category='car')],
         [_btn('📱 Телефоны', 'shop_category', category='phone')],
-    ],
-}
+    ]
+    if is_admin:
+        buttons.append([_btn('💎 VIP-магазин', 'vip_shop')])
+    return {'inline': True, 'buttons': buttons}
+
+def shop_items_keyboard(category):
+    return {'inline': True, 'buttons': [[_btn('⬅️ Назад', 'shop_main')]]}
 
 
 def profession_keyboard():

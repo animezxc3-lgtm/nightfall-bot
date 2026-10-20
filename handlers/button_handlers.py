@@ -1,5 +1,5 @@
 import json
-from keyboards import menu_keyboard, back_to_menu_keyboard, SHOP_MENU, profession_keyboard, shop_items_keyboard
+from keyboards import menu_keyboard, back_to_menu_keyboard, get_shop_menu, profession_keyboard, shop_items_keyboard, _btn
 from admin_commands import get_admin_level
 from database import get_duel_for_opponent, delete_duel
 
@@ -370,7 +370,14 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         return
 
     if cmd == 'shop_main':
-        edit('🛒 Магазин\n\nЧто вас интересует?', SHOP_MENU)
+        edit('🛒 Магазин\n\nЧто вас интересует?', get_shop_menu(is_admin))
+        return
+
+    if cmd == 'vip_shop':
+        from handlers.message_handlers import vip_shop_text
+        # Создаем кнопку "Назад" в магазин
+        back_btn = {'inline': True, 'buttons': [[_btn('⬅️ Назад', 'shop_main')]]}
+        edit(vip_shop_text(), back_btn)
         return
 
     if cmd == 'buy_property':

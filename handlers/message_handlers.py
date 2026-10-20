@@ -565,9 +565,11 @@ def handle_command(command, user_id, peer_id, vk, text):
         return
 
     # ─── МАГАЗИН ────────────────────────────────────────
+        # ─── МАГАЗИН ────────────────────────────────────────
     if command == 'магазин':
-        from keyboards import SHOP_MENU
-        _send(vk, peer_id, '🛒 Магазин\n\nЧто вас интересует?', SHOP_MENU, exclude_actor=True)
+        from keyboards import get_shop_menu
+        is_adm = get_admin_level(user_id, peer_id) >= 1
+        _send(vk, peer_id, '🛒 Магазин\n\nЧто вас интересует?', get_shop_menu(is_adm), exclude_actor=True)
         return
 
     m = re.match(r'^(дом|машина|телефон)\s+(\d+)$', command)
