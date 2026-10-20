@@ -461,3 +461,8 @@ def set_chat_pin(peer_id, conversation_message_id=None, message_id=None):
 
 def reset_chat_pin_cmid(peer_id):
     with db_cursor(True) as (_, c): c.execute("UPDATE chat_pins SET conversation_message_id=NULL WHERE peer_id=?", (peer_id,))
+
+def user_exists(user_id):
+    with db_cursor() as (_, c):
+        c.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,))
+        return c.fetchone() is not None
