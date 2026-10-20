@@ -95,20 +95,32 @@ def add_message_count(user_id, peer_id):
         c.execute("INSERT INTO chat_message_stats(peer_id, user_id, date, count) VALUES(?,?,?,1) ON CONFLICT(peer_id, user_id, date) DO UPDATE SET count = count + 1", (peer_id, user_id, today))
         c.execute("UPDATE users SET messages_total = messages_total + 1, last_message_at = CURRENT_TIMESTAMP WHERE user_id=?", (user_id,))
 
-def get_admin_level_for_chat(peer_id, user_id):
-    with db_cursor() as (_, c):
-        try:
-            r = c.execute("SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id)).fetchone()
-            return int(r[0]) if r else 0
-        except: return 0
-
 def set_admin_level(peer_id, user_id, level, role_name):
     with db_cursor(True) as (_, c):
-        try: lvl = int(level)
-        except: lvl = 0
-        if lvl <= 0: c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
-        else: c.execute("INSERT INTO admin_chat_rights(peer_id,user_id,level) VALUES(?,?,?) ON CONFLICT(peer_id,user_id) DO UPDATE SET level=excluded.level", (peer_id, user_id, lvl))
+        # УДАЛЯЕМ старую запись (даже если ключ был косячный)
+        c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
+        if level > 0:
+            # ВСТАВЛЯЕМ новую
+            c.execute(
+                "INSERT INTO admin_chat_rights(peer_id, user_id, level) VALUES(?,?,?)",
+                (peer_id, user_id, int(level))
+            )
+            # ЖЕСТКИЙ КОММИТ (на всякий случай)
+            c.execute("COMMIT")
 
+def get_admin_level_for_chat(peer_id, user_id):
+    with db_cursor() as (_, c):
+        # Берем МАКСИМАЛЬНЫЙ уровень, если вдруг есть дубликаты
+        r = c.execute(
+            "SELECT MAX(level) FROM admin_chat_rights WHERE peer_id=? AND user_id=?", 
+            (peer_id, user_id)
+        ).fetchone()
+        return int(r[0]) if r and r[0] is not None else 0
+
+def get_all_global_roles():
+    with db_cursor() as (_, c):
+        return c.execute("SELECT user_id, level FROM global_roles WHERE level>0").fetchall()
+    
 def get_global_role(user_id):
     with db_cursor() as (_, c):
         r = c.execute("SELECT level FROM global_roles WHERE user_id=?", (user_id,)).fetchone()

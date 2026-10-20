@@ -36,14 +36,22 @@ COMMAND_MIN_LEVEL = {
 }
 
 def get_admin_level(user_id, peer_id=None):
-    try:
-        if user_id == CREATOR_ID: return 7
-        g = get_global_role(user_id)
-        if g > 0: return g
-        if peer_id and peer_id > 2000000000:
-            l = get_admin_level_for_chat(peer_id, user_id)
-            if l > 0: return l
-    except Exception: pass
+    # 1. Создатель всегда 7
+    if user_id == CREATOR_ID:
+        return 7
+        
+    # 2. Проверяем глобальные
+    g = get_global_role(user_id)
+    if g > 0:
+        return g
+        
+    # 3. Проверяем локальные (если есть беседа)
+    if peer_id and peer_id > 2000000000:
+        l = get_admin_level_for_chat(peer_id, user_id)
+        if l > 0:
+            return l
+            
+    # 4. Если ничего нет - 0
     return 0
 
 def _refresh_pin(vk, peer_id):
@@ -247,20 +255,17 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             _refresh_all_pins(vk)
             return True
 
+                # Локальные роли (1-5)
         if chat_number is None:
             _send(vk, peer_id, 'Укажи номер беседы.', actor_inline=False)
             return True
         target_peer = chat_number if chat_number > 2000000000 else 2000000000 + chat_number
-        if not can_act(user_id, target, target_peer):
-            _send(vk, peer_id, 'Недостаточно прав', actor_inline=False)
-            return True
         
-        try:
-            set_admin_level(target_peer, target, level, ROLE_NAMES[level])
-            _send(vk, peer_id, f'выдал {_user_link(vk, target)} уровень {level} — {ROLE_NAMES[level]} в беседе «{chat_number}».')
-            _refresh_pin(vk, target_peer)
-        except Exception as e:
-            _send(vk, peer_id, f'Ошибка записи в БД: {e}', actor_inline=False)
+        # ВОТ ТУТ ВЫЗОВ:
+        set_admin_level(target_peer, target, level, ROLE_NAMES[level])
+        
+        _send(vk, peer_id, f'выдал {_user_link(vk, target)} уровень {level} — {ROLE_NAMES[level]} в беседе «{chat_number}».')
+        _refresh_pin(vk, target_peer)
         return True
 
     if key == 'пред':
