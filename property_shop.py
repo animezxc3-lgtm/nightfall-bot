@@ -146,14 +146,16 @@ def buy_property(user_id, category, item_name):
     user = get_user(user_id)
     if not user:
         return False, ''
-    current = user[8] if category == "housing" else user[9] if category == "car" else user[10]
+    current = user[9] if category == "housing" else user[10] if category == "car" else user[11]
     if current != 'Отсутствует':
         return False, f"У тебя уже есть имущество этой категории"
-    if user[4] < item["price"]:
+    
+    # ИСПРАВЛЕНО: user[5] - это монеты
+    if (user[5] or 0) < item["price"]:
         return False, (
             f"Недостаточно монет.\n"
             f"Цена: {format_price(item['price'])} 🪙\n"
-            f"Твой баланс: {format_price(user[4])} 🪙"
+            f"Твой баланс: {format_price(user[5] or 0)} 🪙"
         )
     ok = purchase_property(user_id, category, item["name"], item["price"])
     if not ok:

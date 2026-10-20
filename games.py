@@ -18,13 +18,15 @@ def get_random_multiplier(items=COINS_MULTIPLIERS):
 
 
 def casino(user_id, bet):
-    """Возвращает (result, mult, error). error=None если игра прошла."""
     user = get_user(user_id)
     if not user:
         return None, None, None
+    
+    coins = user[5] or 0  # <-- Берем именно монеты (5-й индекс)
+    
     if bet < 1000:
         return None, None, 'Минимальная ставка: 1 000 монет.'
-    if bet > user[4]:
+    if bet > coins:
         return None, None, 'Недостаточно монет.'
 
     mult = get_random_multiplier()
