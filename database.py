@@ -72,7 +72,14 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS kick_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, peer_id INTEGER, kicked_by INTEGER, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS twinks (twink_id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL, added_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS admin_weekly_stats (user_id INTEGER NOT NULL, week_key TEXT NOT NULL, messages INTEGER DEFAULT 0, invites INTEGER DEFAULT 0, reports INTEGER DEFAULT 0, gems_awarded INTEGER DEFAULT 0, PRIMARY KEY(user_id, week_key));
+        CREATE TABLE IF NOT EXISTS hidden_chats (peer_id INTEGER PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS power_message_rewards (user_id INTEGER PRIMARY KEY, claimed_thresholds INTEGER DEFAULT 0);
         """)
+
+def user_exists(user_id):
+    with db_cursor() as (_, c):
+        c.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,))
+        return c.fetchone() is not None
 
 def create_user(user_id, name):
     with db_cursor(True) as (_, c):
@@ -95,32 +102,20 @@ def add_message_count(user_id, peer_id):
         c.execute("INSERT INTO chat_message_stats(peer_id, user_id, date, count) VALUES(?,?,?,1) ON CONFLICT(peer_id, user_id, date) DO UPDATE SET count = count + 1", (peer_id, user_id, today))
         c.execute("UPDATE users SET messages_total = messages_total + 1, last_message_at = CURRENT_TIMESTAMP WHERE user_id=?", (user_id,))
 
-def set_admin_level(peer_id, user_id, level, role_name):
-    with db_cursor(True) as (_, c):
-        # УДАЛЯЕМ старую запись (даже если ключ был косячный)
-        c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
-        if level > 0:
-            # ВСТАВЛЯЕМ новую
-            c.execute(
-                "INSERT INTO admin_chat_rights(peer_id, user_id, level) VALUES(?,?,?)",
-                (peer_id, user_id, int(level))
-            )
-            # ЖЕСТКИЙ КОММИТ (на всякий случай)
-            c.execute("COMMIT")
-
 def get_admin_level_for_chat(peer_id, user_id):
     with db_cursor() as (_, c):
-        # Берем МАКСИМАЛЬНЫЙ уровень, если вдруг есть дубликаты
-        r = c.execute(
-            "SELECT MAX(level) FROM admin_chat_rights WHERE peer_id=? AND user_id=?", 
-            (peer_id, user_id)
-        ).fetchone()
-        return int(r[0]) if r and r[0] is not None else 0
+        try:
+            r = c.execute("SELECT MAX(level) FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id)).fetchone()
+            return int(r[0]) if r and r[0] is not None else 0
+        except: return 0
 
-def get_all_global_roles():
-    with db_cursor() as (_, c):
-        return c.execute("SELECT user_id, level FROM global_roles WHERE level>0").fetchall()
-    
+def set_admin_level(peer_id, user_id, level, role_name):
+    with db_cursor(True) as (_, c):
+        try: lvl = int(level)
+        except: lvl = 0
+        if lvl <= 0: c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
+        else: c.execute("INSERT INTO admin_chat_rights(peer_id,user_id,level) VALUES(?,?,?) ON CONFLICT(peer_id,user_id) DO UPDATE SET level=excluded.level", (peer_id, user_id, lvl))
+
 def get_global_role(user_id):
     with db_cursor() as (_, c):
         r = c.execute("SELECT level FROM global_roles WHERE user_id=?", (user_id,)).fetchone()
@@ -130,6 +125,9 @@ def set_global_role(user_id, level):
     with db_cursor(True) as (_, c):
         if level <= 0: c.execute("DELETE FROM global_roles WHERE user_id=?", (user_id,))
         else: c.execute("INSERT INTO global_roles(user_id,level) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET level=excluded.level", (user_id, level))
+
+def get_all_global_roles():
+    with db_cursor() as (_, c): return c.execute("SELECT user_id, level FROM global_roles WHERE level>0").fetchall()
 
 def add_warning(user_id, peer_id, is_admin=False):
     with db_cursor(True) as (_, c):
@@ -151,6 +149,11 @@ def clear_warnings(user_id, peer_id, is_admin=False):
     with db_cursor(True) as (_, c):
         c.execute("DELETE FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=?", (user_id, peer_id, 1 if is_admin else 0))
         c.execute(f"UPDATE users SET {'admin_warnings' if is_admin else 'warnings'} = 0 WHERE user_id=?", (user_id,))
+
+def get_warning_count(user_id, peer_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT COUNT(*) FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=0", (user_id, peer_id)).fetchone()
+        return r[0] if r else 0
 
 def get_warning_stats(user_id, is_admin=False):
     now = datetime.now()
@@ -452,6 +455,32 @@ def get_owner(twink_id):
         r = c.execute("SELECT owner_id FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
         return r[0] if r else None
 
+def add_twink(owner_id, twink_id):
+    if owner_id == twink_id: return False
+    with db_cursor(True) as (_, c):
+        r = c.execute("SELECT owner_id FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
+        if r: return False
+        c.execute("INSERT INTO twinks(twink_id, owner_id, added_at) VALUES(?,?,CURRENT_TIMESTAMP)", (twink_id, owner_id))
+        return True
+
+def remove_twink(twink_id):
+    with db_cursor(True) as (_, c): c.execute("DELETE FROM twinks WHERE twink_id=?", (twink_id,))
+
+def get_twinks(owner_id):
+    with db_cursor() as (_, c):
+        c.execute("SELECT twink_id FROM twinks WHERE owner_id=? ORDER BY added_at", (owner_id,))
+        return [r[0] for r in c.fetchall()]
+
+def is_twink(twink_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT 1 FROM twinks WHERE twink_id=?", (twink_id,)).fetchone()
+        return r is not None
+
+def is_chat_hidden(peer_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT 1 FROM hidden_chats WHERE peer_id=?", (peer_id,)).fetchone()
+        return r is not None
+
 def get_chat_pin(peer_id):
     with db_cursor() as (_, c): return c.execute("SELECT conversation_message_id, message_id, updated_at FROM chat_pins WHERE peer_id=?", (peer_id,)).fetchone()
 
@@ -462,7 +491,28 @@ def set_chat_pin(peer_id, conversation_message_id=None, message_id=None):
 def reset_chat_pin_cmid(peer_id):
     with db_cursor(True) as (_, c): c.execute("UPDATE chat_pins SET conversation_message_id=NULL WHERE peer_id=?", (peer_id,))
 
-def user_exists(user_id):
+def get_application(user_id):
     with db_cursor() as (_, c):
-        c.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,))
-        return c.fetchone() is not None
+        r = c.execute("SELECT user_id, state, current_step, answers, review_peer_id, review_msg_id, created_at, updated_at FROM applications WHERE user_id=?", (user_id,)).fetchone()
+        if not r: return None
+        return {'user_id': r[0], 'state': r[1], 'current_step': r[2], 'answers': json.loads(r[3] or '[]'), 'review_peer_id': r[4], 'review_msg_id': r[5], 'created_at': r[6], 'updated_at': r[7]}
+
+def upsert_application(user_id, state, current_step=0, answers=None, review_peer_id=None, review_msg_id=None):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c):
+        c.execute("INSERT INTO applications(user_id, state, current_step, answers, review_peer_id, review_msg_id, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET state=excluded.state, current_step=excluded.current_step, answers=excluded.answers, review_peer_id=excluded.review_peer_id, review_msg_id=excluded.review_msg_id, updated_at=excluded.updated_at", (user_id, state, current_step, json.dumps(answers or [], ensure_ascii=False), review_peer_id, review_msg_id, now, now))
+
+def delete_application(user_id):
+    with db_cursor(True) as (_, c): c.execute("DELETE FROM applications WHERE user_id=?", (user_id,))
+
+def set_application_cooldown(user_id, days=3):
+    until = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c): c.execute("INSERT INTO application_cooldowns(user_id, until_ts) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET until_ts=excluded.until_ts", (user_id, until))
+
+def get_application_cooldown(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT until_ts FROM application_cooldowns WHERE user_id=?", (user_id,)).fetchone()
+        if not r: return None
+        try: until = datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S")
+        except Exception: return None
+        return until if until > datetime.now() else None
