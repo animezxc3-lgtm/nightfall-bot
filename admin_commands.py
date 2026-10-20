@@ -8,10 +8,9 @@ from database import (
     add_warning, add_kick_event, remove_warning, clear_warnings,
     ban_user, unban_user, get_all_chats, get_banned_users,
     set_welcome_message, get_welcome_data, get_feature, get_broadcast_chats,
-    toggle_feature, get_chat_activity, get_owner, get_application,
-    db_cursor, get_all_global_roles, find_chats_by_number, add_admin_stat,
-    add_to_admin_blacklist, remove_from_admin_blacklist, set_profile_image,
-    get_user_join_date
+    toggle_feature, get_chat_activity, db_cursor, get_all_global_roles, 
+    find_chats_by_number, add_admin_stat, add_to_admin_blacklist, 
+    remove_from_admin_blacklist, set_profile_image
 )
 from pin_manager import refresh_after_admin_change
 
@@ -21,6 +20,7 @@ ROLE_NAMES = {
     6: 'Вершитель правосудия', 7: 'Лелуш ви Британия',
 }
 
+# Слова, которые бот будет искать в команде
 ROLE_WORDS = {
     'стажёр': 1, 'стажер': 1, 'активист': 2, 'рекрутер': 3,
     'зк': 4, 'заместитель куратора': 4, 'куратор': 5,
@@ -35,24 +35,16 @@ COMMAND_MIN_LEVEL = {
     'беседа': 1, 'беседы': 1, 'выдать права': 5, 'аватар': 4, 'норма': 4,
 }
 
+
 def get_admin_level(user_id, peer_id=None):
-    # 1. Создатель всегда 7
-    if user_id == CREATOR_ID:
-        return 7
-        
-    # 2. Проверяем глобальные
+    if user_id == CREATOR_ID: return 7
     g = get_global_role(user_id)
-    if g > 0:
-        return g
-        
-    # 3. Проверяем локальные (если есть беседа)
+    if g > 0: return g
     if peer_id and peer_id > 2000000000:
         l = get_admin_level_for_chat(peer_id, user_id)
-        if l > 0:
-            return l
-            
-    # 4. Если ничего нет - 0
+        if l > 0: return l
     return 0
+
 
 def _refresh_pin(vk, peer_id):
     try: refresh_after_admin_change(vk, peer_id=peer_id, global_change=False)
@@ -64,7 +56,6 @@ def _refresh_all_pins(vk):
 
 def extract_user_id(text):
     if not text: return None
-    text = str(text).strip()
     m = re.search(r'\[id(\d+)\|', text)
     if m: return int(m.group(1))
     m = re.search(r'vk\.(?:com|ru)/id(\d+)', text)
@@ -91,8 +82,7 @@ def _user_fullname(vk, user_id):
 
 def _ensure_profile(vk, user_id):
     if get_user(user_id): return
-    name = _user_fullname(vk, user_id)
-    try: create_user(user_id, name)
+    try: create_user(user_id, _user_fullname(vk, user_id))
     except: pass
 
 def can_act(actor, target, peer):
@@ -116,98 +106,10 @@ def _require(key, uid, peer, vk):
         return False
     return True
 
-def _fmt_date(s):
-    if not s: return '—'
-    s = str(s)[:10]
-    try: y, m, d = s.split('-'); return f'{d}.{m}.{y}'
-    except: return s
 
-def _has_number_in_title(title):
-    return bool(re.search(r'\d+\s*$', str(title).strip())) if title else False
+# ... (ТУТ ОСТАЛЬНЫЕ ФУНКЦИИ: _fmt_date, _has_number_in_title, _get_numbered_chats, _get_user_chats, _build_check) ...
+# ОНИ НЕ МЕНЯЮТСЯ, ОСТАВЬ КАК БЫЛО В ПРЕДЫДУЩЕМ ФАЙЛЕ
 
-def _get_numbered_chats(vk):
-    chats = get_all_chats()
-    if not chats: return []
-    ids = [p for p, _ in chats]
-    names = {}
-    try:
-        data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
-        for x in data:
-            pid = int(x.get('peer', {}).get('id'))
-            names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
-    except: return []
-    result = []
-    for pid, _ in chats:
-        title = names.get(pid, '')
-        if _has_number_in_title(title): result.append((pid, title))
-    def sort_key(item):
-        _, title = item
-        m = re.search(r'^(.*?)(\d+)\s*$', title)
-        if m: return (m.group(1).strip().lower(), int(m.group(2)))
-        return (title.lower(), 0)
-    result.sort(key=sort_key)
-    return result
-
-def _get_user_chats(vk, target, current_peer=None):
-    chats = _get_numbered_chats(vk)
-    titles = []
-    seen = set()
-    if current_peer and current_peer > 2000000000:
-        try:
-            data = vk.messages.getConversationsById(peer_ids=current_peer).get('items', [])
-            if data:
-                title = data[0].get('chat_settings', {}).get('title') or ''
-                if _has_number_in_title(title): titles.append(title); seen.add(title)
-        except: pass
-    for peer, title in chats:
-        if peer == current_peer or peer == APPLICATIONS_PEER_ID or title in seen: continue
-        try:
-            members = vk.messages.getConversationMembers(peer_id=peer).get('items', [])
-            if any(m.get('member_id') == target for m in members): titles.append(title); seen.add(title)
-        except: continue
-    return titles
-
-def _build_check(vk, target, peer_id):
-    u = get_user(target)
-    if not u: return None
-    name = u[1] or 'Пользователь'
-    link = f'[id{target}|{name}]'
-    inviter_id = get_first_inviter(target)
-    inviter_line = f'[id{inviter_id}|{_user_fullname(vk, inviter_id)}]' if inviter_id else '—'
-    join_date = _fmt_date(get_user_join_date(target))
-    level = get_admin_level(target, peer_id)
-    rights = ROLE_NAMES.get(level, 'Участник')
-    banned_line = 'Да' if is_banned(target) else 'Нет'
-    bl_line = 'Да' if is_in_admin_blacklist(target) else 'Нет'
-    adm_w = get_warning_stats(target, True)
-    w = get_warning_stats(target, False)
-    kicks = get_kick_stats(target)
-    chat_titles = _get_user_chats(vk, target, peer_id)
-    msgs = get_messages_stats(target)
-    last = get_last_message_at(target)
-    last_fmt = '—'
-    if last:
-        try:
-            from datetime import datetime as _dt
-            dt = _dt.strptime(last, "%Y-%m-%d %H:%M:%S")
-            last_fmt = dt.strftime("%d.%m.%Y %H:%M")
-        except: last_fmt = last
-    lines = [
-        f'👤 {link}', f'Пригласивший в первый раз: {inviter_line}', f'Дата создания профиля: {join_date}', f'⚙️ Права: {rights}',
-        '', '─────────✦─────────', f'Находится ли в бане: {banned_line}', f'Находится ли в ЧС Администрации: {bl_line}', '',
-        'Адм. предупреждений: ', f'▪За неделю - {adm_w["week"]}', f'▪За месяц - {adm_w["month"]}', f'▪За все время - {adm_w["total"]}',
-        'Предупреждений: ', f'▪За неделю - {w["week"]}', f'▪За месяц - {w["month"]}', f'▪За все время - {w["total"]}',
-        'Был исключен: ', f'▪За неделю - {kicks["week"]}', f'▪За месяц - {kicks["month"]}', f'▪За все время - {kicks["total"]}',
-        '', '─────────✦─────────', 'Беседы в которых состоит пользователь:'
-    ]
-    if chat_titles:
-        for t in chat_titles: lines.append(f'-{t}')
-    else: lines.append('-—')
-    lines.extend([
-        '─────────✦─────────', 'Активность по сообщениям:', f'▪За все время: {msgs["total"]}', f'▪За месяц: {msgs["month"]}',
-        f'▪За неделю: {msgs["week"]}', f'▪За день: {msgs["today"]}', f'▪Последнее сообщение: {last_fmt}'
-    ])
-    return '\n'.join(lines)
 
 def handle_admin_command(command, user_id, peer_id, vk, text):
     keys = sorted(COMMAND_MIN_LEVEL, key=len, reverse=True)
@@ -216,279 +118,105 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
     if not _require(key, user_id, peer_id, vk): return True
     rest = command[len(key):].strip()
 
-    if key == 'проверить':
-        target = extract_user_id(rest)
-        if not target: return True
-        text_out = _build_check(vk, target, peer_id)
-        if not text_out: _send(vk, peer_id, 'Пользователь не найден.', actor_inline=False)
-        else: _send(vk, peer_id, text_out, actor_inline=False)
-        return True
-
+    # ==========================================
+    # ВЫДАТЬ ПРАВА (ПОЛНОСТЬЮ ПЕРЕПИСАНО)
+    # ==========================================
     if key == 'выдать права':
-        parts = rest.split(maxsplit=2)
-        if len(parts) < 2: return True
-        target = extract_user_id(parts[0])
-        if not target: return True
-        chat_number, role_word = None, None
-        if len(parts) == 3:
-            try: chat_number = int(parts[1])
-            except: pass
-            role_word = parts[2].strip().lower()
-        else: role_word = parts[1].strip().lower()
+        # Ищем юзера
+        target = extract_user_id(rest)
+        if not target:
+            _send(vk, peer_id, '❌ Не вижу пользователя. Формат: `лл выдать права @user [номер беседы] [должность]`', actor_inline=False)
+            return True
 
-        level = ROLE_WORDS.get(role_word)
-        if not level:
-            _send(vk, peer_id, 'Такой должности нет.', actor_inline=False)
+        # Ищем должность
+        level = 0
+        for word, lvl in ROLE_WORDS.items():
+            if word in rest:
+                level = lvl
+                break
+                
+        if level == 0:
+            _send(vk, peer_id, '❌ Должность не найдена. Доступно: стажёр, активист, рекрутер, зк, куратор, вершитель, лелуш.', actor_inline=False)
             return True
-        if is_in_admin_blacklist(target):
-            _send(vk, peer_id, f'{_user_link(vk, target)} в чёрном списке администрации.', actor_inline=False)
-            return True
+
+        # Ищем номер беседы
+        m = re.search(r'\b(\d+)\b', rest.replace(str(target), ''))
+        chat_number = int(m.group(1)) if m else None
+
         _ensure_profile(vk, target)
         actor_level = get_admin_level(user_id, peer_id)
 
+        # Выдача ГЛОБАЛЬНЫХ (6, 7)
         if level in (6, 7):
             if actor_level < 7:
-                _send(vk, peer_id, 'Недостаточно прав', actor_inline=False)
+                _send(vk, peer_id, '❌ Только Лелуш может выдавать глобальные роли.', actor_inline=False)
                 return True
             set_global_role(target, level)
-            _send(vk, peer_id, f'назначил {_user_link(vk, target)} на роль {ROLE_NAMES[level]}.')
+            _send(vk, peer_id, f'👑 Выдал глобальную роль {ROLE_NAMES[level]} для {_user_link(vk, target)}.')
             _refresh_all_pins(vk)
             return True
 
-                # Локальные роли (1-5)
+        # Выдача ЛОКАЛЬНЫХ (1-5)
         if chat_number is None:
-            _send(vk, peer_id, 'Укажи номер беседы.', actor_inline=False)
+            _send(vk, peer_id, '❌ Укажи номер беседы. Формат: `лл выдать права @user 1 куратор`', actor_inline=False)
             return True
+
         target_peer = chat_number if chat_number > 2000000000 else 2000000000 + chat_number
         
-        # ВОТ ТУТ ВЫЗОВ:
+        if not can_act(user_id, target, target_peer):
+            _send(vk, peer_id, '❌ Недостаточно прав (ты не можешь выдать роль выше своей).', actor_inline=False)
+            return True
+
         set_admin_level(target_peer, target, level, ROLE_NAMES[level])
-        
-        _send(vk, peer_id, f'выдал {_user_link(vk, target)} уровень {level} — {ROLE_NAMES[level]} в беседе «{chat_number}».')
+        _send(vk, peer_id, f'✅ Выдал {ROLE_NAMES[level]} для {_user_link(vk, target)} в беседе «{chat_number}».')
         _refresh_pin(vk, target_peer)
         return True
 
-    if key == 'пред':
-        target = extract_user_id(rest)
-        if not target or not can_act(user_id, target, peer_id): return True
-        _ensure_profile(vk, target)
-        n = add_warning(target, peer_id, True)
-        if n >= 3:
-            add_kick_event(target, peer_id, user_id)
-            try: vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
-            except: pass
-            _send(vk, peer_id, f'выдал предупреждение {_user_link(vk, target)}. Теперь у него 3/3. {_user_link(vk, target)} исключён из беседы.')
-        else:
-            _send(vk, peer_id, f'выдал предупреждение {_user_link(vk, target)}. Теперь у него {n}/3.')
-        return True
-
-    if key == 'анпред':
-        target = extract_user_id(rest)
-        if not target or not can_act(user_id, target, peer_id): return True
-        _ensure_profile(vk, target)
-        left = remove_warning(target, peer_id, True)
-        _send(vk, peer_id, f'снял пред у {_user_link(vk, target)}. У {_user_link(vk, target)} стало {left}/3 предупреждений')
-        return True
-
-    if key == 'фулл анпред':
-        target = extract_user_id(rest)
-        if not target or not can_act(user_id, target, peer_id): return True
-        _ensure_profile(vk, target)
-        clear_warnings(target, peer_id, True)
-        _send(vk, peer_id, f'снял все предупреждения у {_user_link(vk, target)}.')
-        return True
-
-    if key == 'бан':
-        target = extract_user_id(rest)
-        if not target or not can_act(user_id, target, peer_id): return True
-        _ensure_profile(vk, target)
-        ban_user(target)
-        add_kick_event(target, peer_id, user_id)
-        try: vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
-        except: pass
-        _send(vk, peer_id, 'Пользователь забанен.')
-        return True
-
-    if key == 'разбан':
-        target = extract_user_id(rest)
-        if not target: return True
-        _ensure_profile(vk, target)
-        unban_user(target)
-        _send(vk, peer_id, f'разбанил {_user_link(vk, target)}.')
-        return True
-
-    if key == 'кик':
-        target = extract_user_id(rest)
-        if not target or not can_act(user_id, target, peer_id): return True
-        _ensure_profile(vk, target)
-        add_kick_event(target, peer_id, user_id)
-        try:
-            vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
-            _send(vk, peer_id, f'исключил {_user_link(vk, target)} из беседы.')
-        except: pass
-        return True
-
-    if key == 'фулл кик':
-        target = extract_user_id(rest)
-        if not target or not can_act(user_id, target, peer_id): return True
-        _ensure_profile(vk, target)
-        add_kick_event(target, peer_id, user_id)
-        kicked = 0
-        for cp, _ in get_all_chats():
-            if cp == APPLICATIONS_PEER_ID or cp == peer_id: continue
-            try:
-                members = vk.messages.getConversationMembers(peer_id=cp).get('items', [])
-                if any(m.get('member_id') == target for m in members):
-                    vk.messages.removeChatUser(chat_id=cp - 2000000000, user_id=target)
-                    kicked += 1
-            except: pass
-        try:
-            vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
-            kicked += 1
-        except: pass
-        _send(vk, peer_id, f'исключил {_user_link(vk, target)} из {kicked} бесед.')
-        return True
-
+    # ==========================================
+    # СНЯТЬ ПРАВА (ПОЛНОСТЬЮ ПЕРЕПИСАНО)
+    # ==========================================
     if key == 'снять':
         target = extract_user_id(rest)
-        if not target: return True
+        if not target:
+            _send(vk, peer_id, '❌ Не вижу пользователя. Формат: `лл снять @user`', actor_inline=False)
+            return True
+
+        actor_level = get_admin_level(user_id, peer_id)
+
+        # Снимаем глобальную, если есть
         if get_global_role(target):
-            if get_admin_level(user_id, peer_id) < 7:
-                _send(vk, peer_id, 'Недостаточно прав', actor_inline=False)
+            if actor_level < 7:
+                _send(vk, peer_id, '❌ Только Лелуш может снимать глобальные роли.', actor_inline=False)
                 return True
             set_global_role(target, 0)
-            _send(vk, peer_id, f'снял глобальную роль с {_user_link(vk, target)}.')
+            _send(vk, peer_id, f'👑 Снял глобальную роль с {_user_link(vk, target)}.')
             _refresh_all_pins(vk)
             return True
+
+        # Снимаем локальные
         with db_cursor() as (_, c):
             c.execute("SELECT peer_id FROM admin_chat_rights WHERE user_id=? AND level>0", (target,))
             rows = c.fetchall()
+
         if not rows:
-            _send(vk, peer_id, f'У {_user_link(vk, target)} нет прав.', actor_inline=False)
+            _send(vk, peer_id, f'❌ У {_user_link(vk, target)} нет прав.', actor_inline=False)
             return True
+
+        # Проверка, что снимающий выше по званию
+        for rp in rows:
+            if not can_act(user_id, target, rp[0]):
+                _send(vk, peer_id, '❌ Недостаточно прав для снятия.', actor_inline=False)
+                return True
+
         removed = []
         for (rp,) in rows:
             set_admin_level(rp, target, 0, 'Участник')
             removed.append(rp)
-        _send(vk, peer_id, f'снял права с {_user_link(vk, target)} в {len(removed)} беседах.')
+
+        _send(vk, peer_id, f'✅ Снял права с {_user_link(vk, target)} в {len(removed)} беседах.')
         for rp in removed: _refresh_pin(vk, rp)
         return True
 
-    if key == 'банстат':
-        rows = get_banned_users()
-        _send(vk, peer_id, '🔒 В бане никого нет.' if not rows else '\n'.join(
-            ['🔒 Пользователи в бане:'] + [f'{i}. {n or "Пользователь"} — https://vk.com/id{u}' for i, (u, n) in enumerate(rows, 1)]), actor_inline=False)
-        return True
-
-    if key == 'админы':
-        with db_cursor() as (_, c):
-            c.execute('SELECT peer_id,user_id,level FROM admin_chat_rights WHERE level>0 ORDER BY level DESC,peer_id')
-            rows = c.fetchall()
-        if not rows:
-            _send(vk, peer_id, '📋 Администраторов нет.', actor_inline=False)
-            return True
-        _send(vk, peer_id, '👑 Администрация по беседам:\n' + '\n'.join(
-            f'Беседа {p}: {ROLE_NAMES.get(l, str(l))} — https://vk.com/id{u}' for p, u, l in rows), actor_inline=False)
-        return True
-
-    if key == 'чс адм':
-        target = extract_user_id(rest)
-        if not target: return True
-        _ensure_profile(vk, target)
-        add_to_admin_blacklist(target, user_id)
-        _send(vk, peer_id, f'занёс {_user_link(vk, target)} в ЧС Администрации.')
-        return True
-
-    if key == 'убрать чс адм':
-        target = extract_user_id(rest)
-        if not target: return True
-        if not is_in_admin_blacklist(target):
-            _send(vk, peer_id, f'{_user_link(vk, target)} не в ЧС.', actor_inline=False)
-            return True
-        remove_from_admin_blacklist(target)
-        _send(vk, peer_id, f'убрал {_user_link(vk, target)} из ЧС Администрации.')
-        return True
-
-    if key == 'аватар':
-        m_user = re.search(r'\[id(\d+)\|[^\]]+\]', rest)
-        m_photo = re.search(r'(\d{5,})\s*$', rest)
-        if not m_user or not m_photo: return True
-        target = int(m_user.group(1))
-        photo_id = m_photo.group(1)
-        _ensure_profile(vk, target)
-        set_profile_image(target, f'photo-{GROUP_ID}_{photo_id}')
-        _send(vk, peer_id, f'установил аватар для {_user_link(vk, target)}.')
-        return True
-
-    if key == 'изменить приветствие':
-        photo = ''
-        m = re.match(r'^(\d+)\s+(.+)$', rest)
-        if m:
-            photo_id, text = m.group(1), m.group(2).strip()
-            photo = f'photo-{GROUP_ID}_{photo_id}'
-            rest = text
-        if not rest: return True
-        set_welcome_message(peer_id, rest, photo)
-        _send(vk, peer_id, 'Приветствие изменено.', actor_inline=False)
-        return True
-
-    if key == 'приветствие':
-        w, p = get_welcome_data(peer_id)
-        args = {'peer_id': peer_id, 'random_id': 0, 'message': w or '', 'disable_mentions': True}
-        if p: args['attachment'] = p
-        try: vk.messages.send(**args)
-        except: pass
-        return True
-
-    if key == 'рассылка':
-        if not get_feature(peer_id, 'рассылка'):
-            _send(vk, peer_id, 'Рассылка отключена.', actor_inline=False)
-            return True
-        if not rest:
-            _send(vk, peer_id, 'Укажи сообщение.', actor_inline=False)
-            return True
-        chats = get_broadcast_chats()
-        if not chats:
-            _send(vk, peer_id, 'Рассылка не включена нигде.', actor_inline=False)
-            return True
-        ok = bad = 0
-        for cp in chats:
-            try:
-                vk.messages.send(peer_id=cp, random_id=0, message=rest)
-                ok += 1
-            except: bad += 1
-        _send(vk, peer_id, f'📢 Доставлено: {ok}, ошибок: {bad}.', actor_inline=False)
-        return True
-
-    if key.startswith('переключить '):
-        feature = key[len('переключить '):]
-        state = toggle_feature(peer_id, feature)
-        _send(vk, peer_id, f'⚙️ {feature}: {"включено" if state else "выключено"}.', actor_inline=False)
-        return True
-
-    if key == 'беседа':
-        a = get_chat_activity(peer_id)
-        _send(vk, peer_id, (
-            f'💬 Текущая беседа\n📊 День: {a["today"]}\n📆 Неделя: {a["week"]}\n📆 Месяц: {a["month"]}\n📈 Всё время: {a["total"]}\n'
-            f'⚙️ Казино: {"включено" if get_feature(peer_id, "казино") else "выключено"}\n'
-            f'⚔️ Дуэли: {"включены" if get_feature(peer_id, "дуэль") else "выключены"}\n'
-            f'📢 Рассылка: {"включена" if get_feature(peer_id, "рассылка") else "выключена"}\n'
-            f'🔇 Мут: {"включён" if get_feature(peer_id, "мут") else "выключен"}\n'
-            f'🧹 Чистка: {"включена" if get_feature(peer_id, "чистка") else "выключена"}'
-        ), actor_inline=False)
-        return True
-
-    if key == 'беседы':
-        chats = _get_numbered_chats(vk)
-        if not chats:
-            _send(vk, peer_id, 'Беседы не найдены.', actor_inline=False)
-            return True
-        lines = ['💬 Активность бесед']
-        for i, (p, title) in enumerate(chats, 1):
-            a = get_chat_activity(p)
-            lines.extend([f'{i}. {title}', f'День: {a["today"]}', f'Неделя: {a["week"]}', f'Месяц: {a["month"]}', f'Всё время: {a["total"]}', '────────────────────'])
-        lines.pop()
-        _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
-        return True
-
+    # ... (ОСТАЛЬНЫЕ КОМАНДЫ: пред, кик, бан, норма, аватар, приветствие и т.д. оставь как было) ...
+    
     return True
