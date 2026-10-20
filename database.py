@@ -516,3 +516,35 @@ def get_application_cooldown(user_id):
         try: until = datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S")
         except Exception: return None
         return until if until > datetime.now() else None
+
+#ДУЭЛИ
+def has_active_duel(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT 1 FROM duels WHERE challenger_id=? OR opponent_id=? LIMIT 1", (user_id, user_id)).fetchone()
+        return r is not None
+
+def create_duel(challenger_id, opponent_id, peer_id, message_id):
+    with db_cursor(True) as (_, c):
+        c.execute("""
+            INSERT INTO duels(opponent_id, challenger_id, peer_id, message_id, created_at)
+            VALUES(?,?,?,?,CURRENT_TIMESTAMP)
+            ON CONFLICT(opponent_id) DO UPDATE SET
+                challenger_id=excluded.challenger_id, peer_id=excluded.peer_id,
+                message_id=excluded.message_id, created_at=excluded.created_at
+        """, (opponent_id, challenger_id, peer_id, message_id))
+
+def get_duel_for_opponent(opponent_id):
+    with db_cursor() as (_, c):
+        return c.execute("SELECT challenger_id, opponent_id, peer_id, message_id FROM duels WHERE opponent_id=?", (opponent_id,)).fetchone()
+
+def delete_duel(opponent_id):
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM duels WHERE opponent_id=?", (opponent_id,))
+
+def get_chat_user_week_messages(peer_id, user_id, start_date, end_date):
+    with db_cursor() as (_, c):
+        r = c.execute("""
+            SELECT SUM(count) FROM chat_message_stats 
+            WHERE peer_id=? AND user_id=? AND date >= ? AND date <= ?
+        """, (peer_id, user_id, start_date, end_date)).fetchone()
+        return r[0] if r and r[0] else 0
