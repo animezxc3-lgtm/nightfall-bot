@@ -477,16 +477,25 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, text_family, exclude_actor=True)
         return
 
-    # ─── ОТНОШЕНИЯ ──────────────────────────────────────
+# ─── ОТНОШЕНИЯ ──────────────────────────────────────
     if command.startswith('начать отношения '):
         target = _target(command[len('начать отношения '):])
+        if not target: # <-- ЗАЩИТА
+            _send(vk, peer_id, 'Укажи пользователя (тег или ссылку).')
+            return
         ok, msg = start_relationship(user_id, target, vk)
-        if ok:
-            from keyboards import relationship_proposal_keyboard
-            _send(vk, peer_id, msg, relationship_proposal_keyboard())
-        else:
-            _send(vk, peer_id, msg)
-        return
+        ...
+    
+    if command.startswith('создать брак '):
+        parts = command.split(maxsplit=3)
+        if len(parts) < 4:
+            _send(vk, peer_id, 'Формат: `лл создать брак @user <фамилия>`')
+            return
+        target = _target(parts[2])
+        if not target: # <-- ЗАЩИТА
+            _send(vk, peer_id, 'Не удалось распознать пользователя.')
+            return
+        ...
 
     if command == 'расстаться':
         _send(vk, peer_id, end_relationship(user_id))
@@ -512,23 +521,6 @@ def handle_command(command, user_id, peer_id, vk, text):
         from relationships import get_display_name as _gdn
         other = f'[id{partner}|{_gdn(partner) or "партнёр"}]'
         _send(vk, peer_id, random.choice(RP_RESPONSES['обнять']).format(target=other))
-        return
-
-    if command.startswith('создать брак '):
-        parts = command.split(maxsplit=3)
-        if len(parts) < 4:
-            return
-        target = _target(parts[2])
-        surname = parts[3].strip()
-        from relationships import propose_marriage
-        ok, msg = propose_marriage(user_id, target, surname)
-        if ok:
-            from keyboards import marriage_proposal_keyboard
-            _send(vk, peer_id,
-                  f'{msg}\n\n💍 Фамилия семьи: «{surname}»\n\nСогласиться или отказаться?',
-                  marriage_proposal_keyboard())
-        else:
-            _send(vk, peer_id, msg)
         return
 
     if command == 'развестись':

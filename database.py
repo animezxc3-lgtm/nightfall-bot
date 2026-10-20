@@ -558,16 +558,17 @@ def claim_power_for_messages(user_id):
 def get_gems(user_id):
     with db_cursor() as (_, c):
         r = c.execute("SELECT soul_gems FROM users WHERE user_id=?", (user_id,)).fetchone()
-        return int(r[0]) if r else 0
-
-def update_gems(user_id, amount):
-    with db_cursor(True) as (_, c): c.execute("UPDATE users SET soul_gems=soul_gems+? WHERE user_id=?", (amount, user_id))
+        return int(r[0]) if r and r[0] is not None else 0
 
 def debit_gems(user_id, amount):
     if amount <= 0: return False
     with db_cursor(True) as (_, c):
-        c.execute("UPDATE users SET soul_gems=soul_gems-? WHERE user_id=? AND soul_gems>=?", (amount, user_id, amount))
+        c.execute("UPDATE users SET soul_gems=COALESCE(soul_gems, 0)-? WHERE user_id=? AND COALESCE(soul_gems, 0)>=?", (amount, user_id, amount))
         return c.rowcount == 1
+        return int(r[0]) if r else 0
+
+def update_gems(user_id, amount):
+    with db_cursor(True) as (_, c): c.execute("UPDATE users SET soul_gems=soul_gems+? WHERE user_id=?", (amount, user_id))
 
 def transfer_gems(sender, target, amount):
     if amount <= 0 or sender == target: return False

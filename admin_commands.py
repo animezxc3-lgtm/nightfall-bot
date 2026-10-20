@@ -128,7 +128,8 @@ def _refresh_pin(vk, peer_id):
     try:
         result = refresh_after_admin_change(vk, peer_id=peer_id, global_change=False)
     except Exception as e:
-        print(f'⚠️ Ошибка обновления закрепа {peer_id}: {e}')
+        # Если бот вышел из беседы или она удалена, мы просто пишем в консоль, а не роняем бота
+        print(f'⚠️ Не удалось обновить закреп {peer_id}: {e}')
 
 
 def _refresh_all_pins(vk):
