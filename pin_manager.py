@@ -63,31 +63,36 @@ def _header_line(title):
 def build_pin_text(vk, peer_id):
     title = _chat_title(vk, peer_id)
 
-    # Собираем роли по уровням (1-7)
+    # Создаем словарь для ВСЕХ 7 уровней
     roles = {1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: []}
     seen = set()
 
-    # 1. ГЛОБАЛЬНЫЕ РОЛИ (7 - Лелуш, 6 - Вершитель)
-    # Берем ВСЕХ, у кого есть глобальная роль
-    for uid, level in get_all_global_roles():
-        if uid in seen:
-            continue
-        if level in (6, 7):
-            roles[level].append(uid)
-            seen.add(uid)
+    # 1. Сначала собираем ГЛОБАЛЬНЫЕ роли (Лелуш - 7, Вершитель - 6)
+    try:
+        for uid, level in get_all_global_roles():
+            if uid in seen:
+                continue
+            if level in (6, 7):
+                roles[level].append(uid)
+                seen.add(uid)
+    except Exception as e:
+        print(f'⚠️ Ошибка получения глобальных ролей: {e}')
 
-    # Если твой CREATOR_ID не был добавлен (например, его стерли из БД), добавляем принудительно
+    # Если создателя нет в базе глобальных ролей, принудительно добавляем его на 7 уровень
     if CREATOR_ID not in seen:
         roles[7].append(CREATOR_ID)
         seen.add(CREATOR_ID)
 
-    # 2. ЛОКАЛЬНЫЕ РОЛИ (5 - Куратор, 4 - ЗК, 3 - Рекрутер, 2 - Активист, 1 - Стажёр)
-    for uid, level in get_admins_for_chat(peer_id):
-        if uid in seen:
-            continue
-        if level in (1, 2, 3, 4, 5):
-            roles[level].append(uid)
-            seen.add(uid)
+    # 2. Затем собираем ЛОКАЛЬНЫЕ роли (Куратор 5, ЗК 4, Рекрутер 3, Активист 2, Стажёр 1)
+    try:
+        for uid, level in get_admins_for_chat(peer_id):
+            if uid in seen:
+                continue
+            if level in (1, 2, 3, 4, 5):
+                roles[level].append(uid)
+                seen.add(uid)
+    except Exception as e:
+        print(f'⚠️ Ошибка получения локальных ролей: {e}')
 
     lines = [
         _header_line(title),
@@ -310,7 +315,6 @@ def update_pin_in_chat(vk, peer_id, notify=False):
 
 
 def update_all_pins(vk):
-    """Обновляет закрепы ТОЛЬКО в беседах с числом в названии."""
     chats = get_all_chats()
     if not chats:
         return []
