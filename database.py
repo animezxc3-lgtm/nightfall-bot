@@ -794,3 +794,8 @@ def hide_chat(peer_id):
 def unhide_chat(peer_id):
     with db_cursor(True) as (_, c):
         c.execute("DELETE FROM hidden_chats WHERE peer_id=?", (peer_id,))
+
+def get_user_join_date(user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT join_date FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return r[0] if r else None
