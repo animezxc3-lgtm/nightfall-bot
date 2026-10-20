@@ -652,14 +652,21 @@ def get_all_global_roles():
 
 def set_admin_level(peer_id, user_id, level, role_name):
     with db_cursor(True) as (_, c):
-        if level <= 0: c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
-        else: c.execute("INSERT INTO admin_chat_rights(peer_id,user_id,level) VALUES(?,?,?) ON CONFLICT(peer_id,user_id) DO UPDATE SET level=excluded.level", (peer_id, user_id, level))
-
+        # Сначала удаляем старую запись, чтобы не было конфликтов
+        c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
+        if level > 0:
+            c.execute(
+                "INSERT INTO admin_chat_rights(peer_id, user_id, level) VALUES(?,?,?)",
+                (peer_id, user_id, level)
+            )
 def get_admin_level_for_chat(peer_id, user_id):
     with db_cursor() as (_, c):
-        r = c.execute("SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id)).fetchone()
+        r = c.execute(
+            "SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?", 
+            (peer_id, user_id)
+        ).fetchone()
         return int(r[0]) if r else 0
-
+    
 def get_admins_for_chat(peer_id):
     with db_cursor() as (_, c): return c.execute("SELECT user_id, level FROM admin_chat_rights WHERE peer_id=? AND level>0 ORDER BY level DESC", (peer_id,)).fetchall()
 

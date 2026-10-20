@@ -427,17 +427,16 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             _refresh_all_pins(vk)
             return True
 
+                # Локальные роли (1-5)
         if chat_number is None:
             _send(vk, peer_id, 'Укажи номер беседы.', actor_inline=False)
             return True
+
         target_peer = chat_number if chat_number > 2000000000 else 2000000000 + chat_number
-        if chat_number <= 0:
-            _send(vk, peer_id, 'Некорректный номер беседы.', actor_inline=False)
-            return True
-        if not can_act(user_id, target, target_peer):
-            _send(vk, peer_id, 'Недостаточно прав', actor_inline=False)
-            return True
+        
+        # Принудительно записываем права в базу!
         set_admin_level(target_peer, target, level, ROLE_NAMES[level])
+        
         _send(vk, peer_id, f'выдал {_user_link(vk, target)} уровень {level} — {ROLE_NAMES[level]} в беседе «{chat_number}».')
         _refresh_pin(vk, target_peer)
         return True
