@@ -1,6 +1,7 @@
 """Работа с закреплённым сообщением администрации."""
 
 import re
+import time
 
 from config import (
     PIN_COMMUNITY_LINK,
@@ -24,6 +25,7 @@ from database import (
 
 
 DIVIDER = '⋅⋆✦──── ⋆⋅☆⋅⋆ ────✦⋆⋅'
+_last_pin_update = {}
 
 
 def _vk_name(vk, uid):
@@ -63,36 +65,28 @@ def _header_line(title):
 def build_pin_text(vk, peer_id):
     title = _chat_title(vk, peer_id)
 
-    # Создаем словарь для ВСЕХ 7 уровней
     roles = {1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: []}
     seen = set()
 
-    # 1. Сначала собираем ГЛОБАЛЬНЫЕ роли (Лелуш - 7, Вершитель - 6)
-    try:
-        for uid, level in get_all_global_roles():
-            if uid in seen:
-                continue
-            if level in (6, 7):
-                roles[level].append(uid)
-                seen.add(uid)
-    except Exception as e:
-        print(f'⚠️ Ошибка получения глобальных ролей: {e}')
+    # 1. ГЛОБАЛЬНЫЕ РОЛИ (7 - Лелуш, 6 - Вершитель)
+    for uid, level in get_all_global_roles():
+        if uid in seen:
+            continue
+        if level in (6, 7):
+            roles[level].append(uid)
+            seen.add(uid)
 
-    # Если создателя нет в базе глобальных ролей, принудительно добавляем его на 7 уровень
     if CREATOR_ID not in seen:
         roles[7].append(CREATOR_ID)
         seen.add(CREATOR_ID)
 
-    # 2. Затем собираем ЛОКАЛЬНЫЕ роли (Куратор 5, ЗК 4, Рекрутер 3, Активист 2, Стажёр 1)
-    try:
-        for uid, level in get_admins_for_chat(peer_id):
-            if uid in seen:
-                continue
-            if level in (1, 2, 3, 4, 5):
-                roles[level].append(uid)
-                seen.add(uid)
-    except Exception as e:
-        print(f'⚠️ Ошибка получения локальных ролей: {e}')
+    # 2. ЛОКАЛЬНЫЕ РОЛИ (5 - Куратор, 4 - ЗК, 3 - Рекрутер, 2 - Активист, 1 - Стажёр)
+    for uid, level in get_admins_for_chat(peer_id):
+        if uid in seen:
+            continue
+        if level in (1, 2, 3, 4, 5):
+            roles[level].append(uid)
+            seen.add(uid)
 
     lines = [
         _header_line(title),
@@ -109,7 +103,6 @@ def build_pin_text(vk, peer_id):
         '',
     ]
 
-    # ─── ГЛОБАЛЬНЫЕ РОЛИ (ВСЕГДА ВЫВОДИМ) ───
     global_roles = [
         (7, '👑', 'Лелуш ви Британия'),
         (6, '⚖', 'Вершитель правосудия'),
@@ -123,7 +116,6 @@ def build_pin_text(vk, peer_id):
             lines.append('absent')
         lines.extend(['', DIVIDER, ''])
 
-    # ─── ЛОКАЛЬНЫЕ РОЛИ ───
     local_roles = [
         (5, '🌟', 'Куратор'),
         (4, '📱', 'Заместитель Куратора (ЗК)'),
@@ -261,6 +253,7 @@ def edit_pin(vk, peer_id, text, pin):
 
 
 def refresh_pin_if_exists(vk, peer_id):
+    """Ищет закреп. Если находит — редактирует. Если нет — возвращает no_pin."""
     pin = get_chat_pin(peer_id)
 
     if pin and (pin[0] or pin[1]):
@@ -299,12 +292,22 @@ def refresh_pin_if_exists(vk, peer_id):
     return False, 'edit_error'
 
 
-def update_pin_in_chat(vk, peer_id, notify=False):
+def update_pin_in_chat(vk, peer_id, force_create=False, notify=False):
+    """
+    Обновляет закреп.
+    force_create=True — если закрепа нет, создает новый.
+    """
+    now = time.time()
+    if peer_id in _last_pin_update and not force_create:
+        if now - _last_pin_update[peer_id] < 60:
+            return False, 'cooldown'
+    _last_pin_update[peer_id] = now
+
     result = refresh_pin_if_exists(vk, peer_id)
     if result[0]:
         return result
 
-    if result[1] == 'no_pin':
+    if result[1] == 'no_pin' and force_create:
         text = build_pin_text(vk, peer_id)
         message_id, cmid = send_new_pin(vk, peer_id, text)
         if message_id:
@@ -314,27 +317,40 @@ def update_pin_in_chat(vk, peer_id, notify=False):
     return result
 
 
-def update_all_pins(vk):
-    """Обновляет закрепы со списком администрации во всех известных беседах."""
-    from config import APPLICATIONS_PEER_ID
+def update_all_pins(vk, force_create=False):
     chats = get_all_chats()
+    if not chats:
+        return []
+
+    ids = [p for p, _ in chats]
+    names = {}
+    try:
+        data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
+        for x in data:
+            pid = int(x.get('peer', {}).get('id'))
+            names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
+    except Exception as e:
+        print(f'Не удалось получить названия бесед: {e}')
+
     results = []
     for peer_id, _ in chats:
-        if peer_id == APPLICATIONS_PEER_ID: continue
-        try:
-            result = update_pin_in_chat(vk, peer_id)
-            results.append((peer_id, result[1]))
-        except Exception as e:
-            results.append((peer_id, 'error'))
-            print(f'❌ Ошибка обновления администрации {peer_id}: {e}')
+        if peer_id == APPLICATIONS_PEER_ID:
+            continue
+        title = names.get(peer_id, '')
+        if not re.search(r'\d+\s*$', title):
+            continue
+        result = update_pin_in_chat(vk, peer_id, force_create=force_create)
+        results.append((peer_id, result[1]))
     return results
 
+
 def refresh_after_admin_change(vk, peer_id=None, global_change=False):
-    """Обновляет закреп после изменения прав."""
     if global_change:
-        print('🔄 Изменены глобальные роли. Обновляю все закрепы.')
-        return update_all_pins(vk)
+        print('🔄 Изменена глобальная администрация. Обновляю закрепы.')
+        return update_all_pins(vk, force_create=False)
+
     if peer_id is None:
         return False, 'no_peer'
-    print(f'🔄 Изменены роли в беседе {peer_id}. Обновляю.')
-    return update_pin_in_chat(vk, peer_id)
+
+    print(f'🔄 Изменена администрация в беседе {peer_id}. Обновляю закреп.')
+    return update_pin_in_chat(vk, peer_id, force_create=False)
