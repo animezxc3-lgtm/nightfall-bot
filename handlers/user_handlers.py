@@ -1,7 +1,7 @@
 from database import get_user, get_power_rank, get_warning_count, get_chat_join_date
 from relationships import get_display_name, get_partner_id, get_days_in_relationship
 from jobs.professions import PROFESSIONS, get_level_name
-from admin_commands import get_admin_level, ROLE_NAMES
+from admin_commands import get_admin_level, get_display_admin_level, ROLE_NAMES
 
 def _profile_link(user_id, fallback='Пользователь'):
     name = get_display_name(user_id) or fallback
@@ -54,12 +54,10 @@ def get_profile_data(user_id, peer_id=None):
     days = get_days_in_relationship(user_id) if partner else None
     days_line = str(days) if days is not None else '—'
 
-    # Profile uses the same effective-role lookup as command permission checks.
-    try:
-        level = int(get_admin_level(user_id, peer_id) or 0)
-    except Exception as exc:
-        print(f'[RIGHTS][PROFILE] Не удалось определить права user={user_id}, peer={peer_id}: {exc}')
-        level = 0
+    # Profile shows the user's highest assigned role across all chats.
+    # This does not grant permissions in the current chat; permission checks still
+    # use get_admin_level(user_id, peer_id).
+    level = int(get_display_admin_level(user_id) or 0)
 
     rights_display = ROLE_NAMES.get(level, 'Участник')
     warning_count = get_warning_count(user_id, peer_id)

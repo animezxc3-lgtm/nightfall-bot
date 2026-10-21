@@ -7,7 +7,8 @@ from config import TOKEN, GROUP_ID, CREATOR_ID, ALLOWED_IN_DM, REPORT_CHAT_ID
 from database import (
     migrate_database, user_exists, create_user, set_admin_level, set_global_role, ensure_chat,
     add_message_count, claim_power_for_messages, get_feature, record_chat_join,
-    get_chat_join_date, get_welcome_data, is_twink, get_owner
+    get_chat_join_date, get_welcome_data, is_twink, get_owner,
+    grant_one_time_coins, coin_grant_chat_scanned, mark_coin_grant_chat_scanned
 )
 from handlers.message_handlers import handle_command
 from handlers.button_handlers import handle_button
@@ -34,6 +35,54 @@ def _obj_get(obj, key, default=None):
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+def grant_starting_coins_to_chat_members(peer_id):
+    """One-time campaign: grant 100,000 coins to members present in each discovered chat.
+
+    A user can receive the grant only once across all chats. The chat is marked as
+    scanned only after VK returns a successful member list.
+    """
+    if not peer_id or int(peer_id) <= 2000000000 or coin_grant_chat_scanned(peer_id):
+        return
+    try:
+        response = vk.messages.getConversationMembers(peer_id=int(peer_id))
+        items = response.get('items', []) if isinstance(response, dict) else []
+        profiles = response.get('profiles', []) if isinstance(response, dict) else []
+        names = {}
+        for profile in profiles:
+            try:
+                pid = int(profile.get('id', 0))
+                full_name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
+                if pid > 0 and full_name:
+                    names[pid] = full_name
+            except Exception:
+                continue
+        member_ids = set()
+        for item in items:
+            try:
+                mid = int(item.get('member_id', item.get('id', 0)))
+                if mid > 0:
+                    member_ids.add(mid)
+            except Exception:
+                continue
+        for member_id in member_ids:
+            if not user_exists(member_id):
+                name = names.get(member_id)
+                if not name:
+                    try:
+                        info = vk.users.get(user_ids=member_id)[0]
+                        name = f"{info.get('first_name', '')} {info.get('last_name', '')}".strip() or 'Участник'
+                    except Exception:
+                        name = 'Участник'
+                create_user(member_id, name)
+            if grant_one_time_coins(member_id, 100000):
+                print(f'[COINS][ONE-TIME] user={member_id} +100000')
+        mark_coin_grant_chat_scanned(peer_id)
+        print(f'[COINS][ONE-TIME] Беседа {peer_id}: обработано участников {len(member_ids)}')
+    except Exception as exc:
+        # Do not mark the chat as scanned if VK request failed; retry on a later message.
+        print(f'[COINS][ONE-TIME] Не удалось получить участников беседы {peer_id}: {exc}')
+
 
 def send_welcome(peer_id, user_id):
     try:
@@ -221,6 +270,7 @@ for event in longpoll.listen():
 
         # --- СООБЩЕНИЯ В БЕСЕДЕ ---
         ensure_chat(peer)
+        grant_starting_coins_to_chat_members(peer)
         add_message_count(uid, peer)
         try:
             awarded_tasks = task_event(uid, 'messages')

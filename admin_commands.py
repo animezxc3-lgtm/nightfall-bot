@@ -10,7 +10,7 @@ from database import (
     ban_user, unban_user, get_all_chats, get_banned_users,
     set_welcome_message, get_welcome_data, get_feature, get_broadcast_chats,
     toggle_feature, get_chat_activity, get_owner, get_application,
-    db_cursor, get_all_global_roles, get_rp_photo_count, replace_rp_photos,
+    db_cursor, get_all_global_roles, get_user_admin_rights, get_rp_photo_count, replace_rp_photos,
     # Новые добавления:
     find_chats_by_number, add_admin_stat, add_to_admin_blacklist, 
     remove_from_admin_blacklist, set_profile_image
@@ -93,6 +93,23 @@ def _get_numbered_chats(vk):
 
     result.sort(key=sort_key)
     return result
+
+
+def get_display_admin_level(user_id):
+    """Highest assigned role for profile display, independent of current conversation.
+
+    This is display-only. Permission checks must continue to use get_admin_level(user_id, peer_id).
+    """
+    if int(user_id) == CREATOR_ID:
+        return 7
+    try:
+        global_level, local_roles = get_user_admin_rights(int(user_id))
+        if global_level in (6, 7):
+            return int(global_level)
+        return max((int(level) for _, level in local_roles if 1 <= int(level) <= 5), default=0)
+    except Exception as exc:
+        print(f'[RIGHTS][PROFILE] Не удалось получить назначенные роли user={user_id}: {exc}')
+        return 0
 
 
 def get_admin_level(user_id, peer_id=None):

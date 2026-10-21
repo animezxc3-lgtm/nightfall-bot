@@ -64,6 +64,15 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS admin_chat_rights (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, level INTEGER NOT NULL, PRIMARY KEY(peer_id, user_id));
         CREATE TABLE IF NOT EXISTS chat_members (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, first_join_at TEXT NOT NULL, invited_by INTEGER, PRIMARY KEY(peer_id, user_id));
         CREATE TABLE IF NOT EXISTS global_roles (user_id INTEGER PRIMARY KEY, level INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS one_time_coin_grants (
+            user_id INTEGER PRIMARY KEY,
+            amount INTEGER NOT NULL DEFAULT 100000,
+            granted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS coin_grant_scanned_chats (
+            peer_id INTEGER PRIMARY KEY,
+            scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         CREATE TABLE IF NOT EXISTS duels (opponent_id INTEGER PRIMARY KEY, challenger_id INTEGER NOT NULL, peer_id INTEGER NOT NULL, message_id INTEGER, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS admin_blacklist (user_id INTEGER PRIMARY KEY, added_by INTEGER NOT NULL, added_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS applications (user_id INTEGER PRIMARY KEY, state TEXT NOT NULL, current_step INTEGER DEFAULT 0, answers TEXT DEFAULT '[]', review_peer_id INTEGER, review_msg_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -337,6 +346,31 @@ def get_banned_users():
 
 def update_coins(user_id, amount):
     with db_cursor(True) as (_, c): c.execute("UPDATE users SET coins=coins+? WHERE user_id=?", (amount, user_id))
+
+def grant_one_time_coins(user_id, amount=100000):
+    """Grant the initial coin bonus once per VK user, even across multiple chats/restarts."""
+    user_id = int(user_id)
+    amount = int(amount)
+    if user_id <= 0 or amount <= 0:
+        return False
+    with db_cursor(True) as (_, c):
+        inserted = c.execute(
+            "INSERT OR IGNORE INTO one_time_coin_grants(user_id, amount) "
+            "SELECT ?, ? WHERE EXISTS(SELECT 1 FROM users WHERE user_id=?)",
+            (user_id, amount, user_id),
+        ).rowcount
+        if inserted:
+            c.execute("UPDATE users SET coins=COALESCE(coins, 0)+? WHERE user_id=?", (amount, user_id))
+            return c.execute("SELECT changes()").fetchone()[0] > 0
+        return False
+
+def coin_grant_chat_scanned(peer_id):
+    with db_cursor() as (_, c):
+        return c.execute("SELECT 1 FROM coin_grant_scanned_chats WHERE peer_id=?", (int(peer_id),)).fetchone() is not None
+
+def mark_coin_grant_chat_scanned(peer_id):
+    with db_cursor(True) as (_, c):
+        c.execute("INSERT OR IGNORE INTO coin_grant_scanned_chats(peer_id) VALUES(?)", (int(peer_id),))
 
 def transfer_coins(sender, target, amount):
     if amount <= 0 or sender == target: return False
