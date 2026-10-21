@@ -315,39 +315,26 @@ def update_pin_in_chat(vk, peer_id, notify=False):
 
 
 def update_all_pins(vk):
+    """Обновляет закрепы со списком администрации во всех известных беседах."""
+    from config import APPLICATIONS_PEER_ID
     chats = get_all_chats()
-    if not chats:
-        return []
-
-    ids = [p for p, _ in chats]
-    names = {}
-    try:
-        data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
-        for x in data:
-            pid = int(x.get('peer', {}).get('id'))
-            names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
-    except Exception as e:
-        print(f'Не удалось получить названия бесед: {e}')
-
     results = []
     for peer_id, _ in chats:
-        if peer_id == APPLICATIONS_PEER_ID:
-            continue
-        title = names.get(peer_id, '')
-        if not re.search(r'\d+\s*$', title):
-            continue
-        result = refresh_pin_if_exists(vk, peer_id)
-        results.append((peer_id, result[1]))
+        if peer_id == APPLICATIONS_PEER_ID: continue
+        try:
+            result = update_pin_in_chat(vk, peer_id)
+            results.append((peer_id, result[1]))
+        except Exception as e:
+            results.append((peer_id, 'error'))
+            print(f'❌ Ошибка обновления администрации {peer_id}: {e}')
     return results
 
-
 def refresh_after_admin_change(vk, peer_id=None, global_change=False):
+    """Обновляет закреп после изменения прав."""
     if global_change:
-        print('🔄 Изменена глобальная администрация. Обновляю закрепы.')
+        print('🔄 Изменены глобальные роли. Обновляю все закрепы.')
         return update_all_pins(vk)
-
     if peer_id is None:
         return False, 'no_peer'
-
-    print(f'🔄 Изменена администрация в беседе {peer_id}. Обновляю закреп.')
-    return refresh_pin_if_exists(vk, peer_id)
+    print(f'🔄 Изменены роли в беседе {peer_id}. Обновляю.')
+    return update_pin_in_chat(vk, peer_id)

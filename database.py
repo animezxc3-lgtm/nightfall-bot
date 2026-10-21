@@ -60,8 +60,18 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS chat_message_stats (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, date TEXT NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY(peer_id, user_id, date));
         CREATE TABLE IF NOT EXISTS chat_settings (peer_id INTEGER PRIMARY KEY, welcome_message TEXT DEFAULT '', welcome_photo TEXT DEFAULT '', cleanup_enabled INTEGER DEFAULT 0, casino_enabled INTEGER DEFAULT 1, mute_enabled INTEGER DEFAULT 0, duel_enabled INTEGER DEFAULT 1, broadcast_enabled INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS relationships (user_id INTEGER PRIMARY KEY, partner_id INTEGER, married INTEGER DEFAULT 0, family_surname TEXT DEFAULT '', relationship_since TEXT);
+        
+        -- ВАЖНО: Добавлены недостающие таблицы
+        CREATE TABLE IF NOT EXISTS family_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, relation_type TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS family_children (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER NOT NULL, child_id INTEGER NOT NULL, UNIQUE(parent_id, child_id));
+        CREATE TABLE IF NOT EXISTS relationship_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS marriage_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, surname TEXT NOT NULL, created_at TEXT NOT NULL);
+        
         CREATE TABLE IF NOT EXISTS warning_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, peer_id INTEGER, is_admin_warning INTEGER DEFAULT 0, created_at TEXT NOT NULL);
+        
+        -- ЖЕСТКИЙ ФИКС: Таблица прав с правильным ключом
         CREATE TABLE IF NOT EXISTS admin_chat_rights (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, level INTEGER NOT NULL, PRIMARY KEY(peer_id, user_id));
+        
         CREATE TABLE IF NOT EXISTS chat_members (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, first_join_at TEXT NOT NULL, invited_by INTEGER, PRIMARY KEY(peer_id, user_id));
         CREATE TABLE IF NOT EXISTS global_roles (user_id INTEGER PRIMARY KEY, level INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS duels (opponent_id INTEGER PRIMARY KEY, challenger_id INTEGER NOT NULL, peer_id INTEGER NOT NULL, message_id INTEGER, created_at TEXT NOT NULL);
@@ -102,19 +112,19 @@ def add_message_count(user_id, peer_id):
         c.execute("INSERT INTO chat_message_stats(peer_id, user_id, date, count) VALUES(?,?,?,1) ON CONFLICT(peer_id, user_id, date) DO UPDATE SET count = count + 1", (peer_id, user_id, today))
         c.execute("UPDATE users SET messages_total = messages_total + 1, last_message_at = CURRENT_TIMESTAMP WHERE user_id=?", (user_id,))
 
-def get_admin_level_for_chat(peer_id, user_id):
-    with db_cursor() as (_, c):
-        try:
-            r = c.execute("SELECT MAX(level) FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id)).fetchone()
-            return int(r[0]) if r and r[0] is not None else 0
-        except: return 0
-
+# ЖЕСТКАЯ ЗАПИСЬ ПРАВ
 def set_admin_level(peer_id, user_id, level, role_name):
     with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
         try: lvl = int(level)
         except: lvl = 0
-        if lvl <= 0: c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
-        else: c.execute("INSERT INTO admin_chat_rights(peer_id,user_id,level) VALUES(?,?,?) ON CONFLICT(peer_id,user_id) DO UPDATE SET level=excluded.level", (peer_id, user_id, lvl))
+        if lvl > 0:
+            c.execute("INSERT INTO admin_chat_rights(peer_id, user_id, level) VALUES(?,?,?)", (peer_id, user_id, lvl))
+
+def get_admin_level_for_chat(peer_id, user_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id)).fetchone()
+        return int(r[0]) if r else 0
 
 def get_admins_for_chat(peer_id):
     with db_cursor() as (_, c):
