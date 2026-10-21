@@ -83,7 +83,7 @@ def build_pin_text(vk, peer_id):
         roles[7].append(CREATOR_ID)
         seen.add(CREATOR_ID)
 
-    # 2. Затем собираем ЛОКАЛЬНЫЕ роли (Куратор 5, ЗК 4, Рекрутер 3, Активист 2, Стажёр 1)
+    # 2. Затем собираем ЛОКАЛЬНЫЕ роли (локальные роли 1–5: Куратор 5, ЗК 4, Рекрутер 3, Активист 2, Стажёр 1)
     try:
         for uid, level in get_admins_for_chat(peer_id):
             if uid in seen:

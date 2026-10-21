@@ -99,25 +99,27 @@ def get_admin_level(user_id, peer_id=None):
     if user_id == CREATOR_ID:
         return 7
 
-    global_level = get_global_role(user_id)
-    if global_level:
+    global_level = int(get_global_role(user_id) or 0)
+    # Only levels 6 and 7 are global in this project. A stale/invalid row
+    # must not override a valid local appointment.
+    if global_level in (6, 7):
         return global_level
 
     if peer_id and peer_id > 2000000000:
-        local = get_admin_level_for_chat(peer_id, user_id)
-        if local:
+        local = int(get_admin_level_for_chat(peer_id, user_id) or 0)
+        if 1 <= local <= 5:
             return local
 
     owner = get_owner(user_id)
     if owner:
         if owner == CREATOR_ID:
             return 7
-        owner_global = get_global_role(owner)
-        if owner_global:
+        owner_global = int(get_global_role(owner) or 0)
+        if owner_global in (6, 7):
             return owner_global
         if peer_id and peer_id > 2000000000:
-            owner_local = get_admin_level_for_chat(peer_id, owner)
-            if owner_local:
+            owner_local = int(get_admin_level_for_chat(peer_id, owner) or 0)
+            if 1 <= owner_local <= 5:
                 return owner_local
 
     return 0
@@ -416,6 +418,65 @@ def _sync_rp_photos():
     return '\n'.join(lines)
 
 
+def repair_legacy_local_role_peer_ids(vk):
+    """Move legacy roles saved under 2000000000 + title_number to real peer IDs.
+
+    Only migrates rows whose old peer_id is not registered as an actual chat and
+    whose trailing title number resolves to exactly one registered conversation.
+    The migration preserves the highest level and deletes the old row only after
+    the replacement row has been written in the same SQLite transaction.
+    """
+    from database import get_all_chats
+    try:
+        registered = {int(peer) for peer, _ in get_all_chats()}
+        with db_cursor() as (_, cur):
+            legacy_rows = cur.execute(
+                'SELECT peer_id, user_id, level FROM admin_chat_rights WHERE level BETWEEN 1 AND 5 ORDER BY peer_id'
+            ).fetchall()
+        moved = 0
+        for old_peer, target_uid, level in legacy_rows:
+            old_peer, target_uid, level = int(old_peer), int(target_uid), int(level)
+            if old_peer in registered or old_peer <= 2000000000:
+                continue
+            number = old_peer - 2000000000
+            if number <= 0:
+                continue
+            matches = find_chats_by_number(vk, str(number))
+            if len(matches) != 1:
+                continue
+            real_peer = int(matches[0])
+            if real_peer == old_peer:
+                continue
+            with db_cursor(True) as (_, cur):
+                current = cur.execute(
+                    'SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?',
+                    (real_peer, target_uid),
+                ).fetchone()
+                merged_level = max(level, int(current[0]) if current else 0)
+                cur.execute(
+                    'INSERT INTO admin_chat_rights(peer_id,user_id,level) VALUES(?,?,?) '
+                    'ON CONFLICT(peer_id,user_id) DO UPDATE SET level=excluded.level',
+                    (real_peer, target_uid, merged_level),
+                )
+                verify = cur.execute(
+                    'SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?',
+                    (real_peer, target_uid),
+                ).fetchone()
+                if not verify or int(verify[0]) != merged_level:
+                    raise RuntimeError('проверка переноса локальной роли не пройдена')
+                cur.execute(
+                    'DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?',
+                    (old_peer, target_uid),
+                )
+            moved += 1
+            print(f'[RIGHTS][MIGRATION] moved user={target_uid} old_peer={old_peer} new_peer={real_peer} level={merged_level}')
+        print(f'[RIGHTS][MIGRATION] legacy roles moved: {moved}')
+        return moved
+    except Exception as exc:
+        print(f'[RIGHTS][MIGRATION] Ошибка восстановления старых локальных ролей: {exc}')
+        return 0
+
+
 def handle_admin_command(command, user_id, peer_id, vk, text):
     keys = sorted(COMMAND_MIN_LEVEL, key=len, reverse=True)
     key = next((k for k in keys if command == k or command.startswith(k + ' ')), None)
@@ -634,7 +695,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 lines.append('• Нет')
             lines.append('')
 
-        _send(vk, peer_id, '\\n'.join(lines), actor_inline=False)
+        _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
         return True
 
     if key == 'выдать права':
@@ -678,8 +739,19 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             if level == 7 and target == CREATOR_ID:
                 _send(vk, peer_id, 'Этот пользователь уже является создателем.', actor_inline=False)
                 return True
-            set_global_role(target, level)
-            _send(vk, peer_id, f'Назначена глобальная роль «{ROLE_NAMES[level]}» для {_user_link(vk, target)}.')
+            try:
+                set_global_role(target, level)
+                saved_global = get_global_role(target)
+            except Exception as exc:
+                print(f'[RIGHTS][DB-WRITE] Ошибка сохранения глобальной роли target={target}, level={level}: {exc}')
+                _send(vk, peer_id, 'Не удалось сохранить глобальные права в SQLite. Подробности записаны в журнал бота.', actor_inline=False)
+                return True
+            if saved_global != level:
+                print(f'[RIGHTS][DB-WRITE] Глобальная роль не подтверждена target={target}, requested={level}, saved={saved_global}')
+                _send(vk, peer_id, f'Ошибка проверки глобальной роли: запрошен уровень {level}, в базе найден {saved_global}.', actor_inline=False)
+                return True
+            print(f'[RIGHTS][DB-WRITE] GLOBAL OK target={target} level={saved_global} role={ROLE_NAMES[level]}')
+            _send(vk, peer_id, f'Назначена глобальная роль «{ROLE_NAMES[level]}» для {_user_link(vk, target)}. Права сохранены.', actor_inline=False)
             _refresh_all_pins(vk)
             return True
 
@@ -691,13 +763,40 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, 'Для локальной роли укажи номер беседы: `лл выдать права @user 1 стажёр`.', actor_inline=False)
             return True
 
-        target_peer = chat_number if chat_number > 2000000000 else 2000000000 + chat_number
+        # A chat number is the trailing number in its title, not a VK peer_id.
+        # The old arithmetic conversion wrote roles to IDs that did not belong
+        # to the actual conversation, so profiles, lists and pins could not see them.
+        if chat_number > 2000000000:
+            target_peer = chat_number
+        else:
+            matches = find_chats_by_number(vk, str(chat_number))
+            if not matches:
+                _send(vk, peer_id, f'Беседа с номером «{chat_number}» не найдена среди зарегистрированных бесед. Проверь номер в названии и используй `лл беседы`.', actor_inline=False)
+                return True
+            if len(matches) > 1:
+                _send(vk, peer_id, f'Найдено несколько бесед с номером «{chat_number}». Сделай номера в названиях уникальными.', actor_inline=False)
+                return True
+            target_peer = int(matches[0])
+
         if not can_act(user_id, target, target_peer):
             _send(vk, peer_id, 'Недостаточно прав: нельзя выдать роль равную или выше своей.', actor_inline=False)
             return True
 
-        set_admin_level(target_peer, target, level, ROLE_NAMES[level])
-        _send(vk, peer_id, f'Назначена роль «{ROLE_NAMES[level]}» для {_user_link(vk, target)} в беседе №{chat_number}.', actor_inline=False)
+        try:
+            set_admin_level(target_peer, target, level, ROLE_NAMES[level])
+            saved_level = get_admin_level_for_chat(target_peer, target)
+        except Exception as exc:
+            print(f'[RIGHTS][DB-WRITE] Ошибка сохранения target={target}, peer={target_peer}, level={level}: {exc}')
+            _send(vk, peer_id, 'Не удалось сохранить права в SQLite. Подробности записаны в журнал бота.', actor_inline=False)
+            return True
+
+        if saved_level != level:
+            print(f'[RIGHTS][DB-WRITE] Проверка не пройдена target={target}, peer={target_peer}, requested={level}, saved={saved_level}')
+            _send(vk, peer_id, f'Ошибка проверки записи прав: запрошен уровень {level}, в базе найден {saved_level}.', actor_inline=False)
+            return True
+
+        print(f'[RIGHTS][DB-WRITE] OK target={target} peer={target_peer} level={saved_level} role={ROLE_NAMES[level]}')
+        _send(vk, peer_id, f'Назначена локальная роль «{ROLE_NAMES[level]}» для {_user_link(vk, target)} в беседе №{chat_number}. Права сохранены.', actor_inline=False)
         _refresh_pin(vk, target_peer)
         return True
 

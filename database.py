@@ -249,12 +249,30 @@ def get_global_role(user_id):
         return int(r[0]) if r else 0
 
 def set_global_role(user_id, level):
+    level = int(level)
+    if level not in (0, 6, 7):
+        raise ValueError(f'Глобальными могут быть только уровни 6 и 7; получен {level}')
     with db_cursor(True) as (_, c):
-        if level <= 0: c.execute("DELETE FROM global_roles WHERE user_id=?", (user_id,))
-        else: c.execute("INSERT INTO global_roles(user_id,level) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET level=excluded.level", (user_id, level))
+        if level == 0:
+            c.execute("DELETE FROM global_roles WHERE user_id=?", (user_id,))
+        else:
+            c.execute("INSERT INTO global_roles(user_id,level) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET level=excluded.level", (user_id, level))
 
 def get_all_global_roles():
     with db_cursor() as (_, c): return c.execute("SELECT user_id, level FROM global_roles WHERE level>0").fetchall()
+
+def get_user_admin_rights(user_id):
+    """Return valid global and local admin assignments without mutating stored data."""
+    with db_cursor() as (_, c):
+        global_row = c.execute(
+            'SELECT level FROM global_roles WHERE user_id=? AND level>0', (int(user_id),)
+        ).fetchone()
+        local_rows = c.execute(
+            'SELECT peer_id, level FROM admin_chat_rights WHERE user_id=? AND level BETWEEN 1 AND 5 ORDER BY level DESC, peer_id',
+            (int(user_id),),
+        ).fetchall()
+    global_level = int(global_row[0]) if global_row and int(global_row[0]) in (6, 7) else 0
+    return global_level, [(int(peer), int(level)) for peer, level in local_rows]
 
 def add_warning(user_id, peer_id, is_admin=False):
     with db_cursor(True) as (_, c):

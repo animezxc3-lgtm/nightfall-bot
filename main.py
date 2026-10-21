@@ -14,7 +14,7 @@ from handlers.button_handlers import handle_button
 from cleanup import run_cleanup
 from reactions import maybe_react
 from response_context import set_user
-from admin_commands import get_admin_level
+from admin_commands import get_admin_level, repair_legacy_local_role_peer_ids
 from applications import start_application, handle_dm_message, cancel_application
 from pin_manager import update_all_pins
 from weekly_report import send_weekly_report
@@ -72,6 +72,12 @@ vk_session = vk_api.VkApi(token=TOKEN)
 vk = vk_session.get_api()
 longpoll = VkBotLongPoll(vk_session, GROUP_ID)
 migrate_database()
+# Recover local roles written by older versions under the fabricated peer_id
+# 2000000000 + chat-number. Ambiguous rows are left untouched for manual review.
+try:
+    repair_legacy_local_role_peer_ids(vk)
+except Exception as e:
+    print(f'[RIGHTS][MIGRATION] Не удалось выполнить восстановление старых ролей: {e}')
 
 try:
     update_all_pins(vk)
