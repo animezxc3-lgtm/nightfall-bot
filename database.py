@@ -60,17 +60,19 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS chat_message_stats (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, date TEXT NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY(peer_id, user_id, date));
         CREATE TABLE IF NOT EXISTS chat_settings (peer_id INTEGER PRIMARY KEY, welcome_message TEXT DEFAULT '', welcome_photo TEXT DEFAULT '', cleanup_enabled INTEGER DEFAULT 0, casino_enabled INTEGER DEFAULT 1, mute_enabled INTEGER DEFAULT 0, duel_enabled INTEGER DEFAULT 1, broadcast_enabled INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS relationships (user_id INTEGER PRIMARY KEY, partner_id INTEGER, married INTEGER DEFAULT 0, family_surname TEXT DEFAULT '', relationship_since TEXT);
-        
-        -- ВАЖНО: Добавлены недостающие таблицы
         CREATE TABLE IF NOT EXISTS family_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, relation_type TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS family_children (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER NOT NULL, child_id INTEGER NOT NULL, UNIQUE(parent_id, child_id));
         CREATE TABLE IF NOT EXISTS relationship_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS marriage_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, surname TEXT NOT NULL, created_at TEXT NOT NULL);
-        
         CREATE TABLE IF NOT EXISTS warning_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, peer_id INTEGER, is_admin_warning INTEGER DEFAULT 0, created_at TEXT NOT NULL);
         
-        -- ЖЕСТКИЙ ФИКС: Таблица прав с правильным ключом
-        CREATE TABLE IF NOT EXISTS admin_chat_rights (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, level INTEGER NOT NULL, PRIMARY KEY(peer_id, user_id));
+        -- ТАБЛИЦА ПРАВ С ПРАВИЛЬНЫМ КЛЮЧОМ
+        CREATE TABLE IF NOT EXISTS admin_chat_rights (
+            peer_id INTEGER NOT NULL, 
+            user_id INTEGER NOT NULL, 
+            level INTEGER NOT NULL, 
+            PRIMARY KEY(peer_id, user_id)
+        );
         
         CREATE TABLE IF NOT EXISTS chat_members (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, first_join_at TEXT NOT NULL, invited_by INTEGER, PRIMARY KEY(peer_id, user_id));
         CREATE TABLE IF NOT EXISTS global_roles (user_id INTEGER PRIMARY KEY, level INTEGER NOT NULL);
@@ -419,7 +421,7 @@ def find_chats_by_number(vk, number):
         for x in data:
             pid = int(x.get('peer', {}).get('id'))
             names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
-    except: return []
+    except Exception: return []
     result = []
     target = str(number).strip().lower()
     for pid, title in names.items():
