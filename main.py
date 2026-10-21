@@ -5,7 +5,7 @@ import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from config import TOKEN, GROUP_ID, CREATOR_ID, ALLOWED_IN_DM, REPORT_CHAT_ID
 from database import (
-    migrate_database, user_exists, create_user, set_admin_level, ensure_chat,
+    migrate_database, user_exists, create_user, set_admin_level, set_global_role, ensure_chat,
     add_message_count, claim_power_for_messages, get_feature, record_chat_join,
     get_chat_join_date, get_welcome_data, is_twink, get_owner
 )
@@ -18,6 +18,7 @@ from admin_commands import get_admin_level
 from applications import start_application, handle_dm_message, cancel_application
 from pin_manager import update_all_pins
 from weekly_report import send_weekly_report
+from tasks import event as task_event, notify_task_rewards
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 
@@ -128,7 +129,7 @@ for event in longpoll.listen():
                 create_user(uid, f"{info['first_name']} {info['last_name']}")
             if uid and peer:
                 if uid == CREATOR_ID:
-                    set_admin_level(peer, uid, 7, 'Лелуш ви Британия')
+                    set_global_role(uid, 7)
                 if get_chat_join_date(peer, uid) is None:
                     record_chat_join(peer, uid)
                 send_welcome(peer, uid)
@@ -215,6 +216,11 @@ for event in longpoll.listen():
         # --- СООБЩЕНИЯ В БЕСЕДЕ ---
         ensure_chat(peer)
         add_message_count(uid, peer)
+        try:
+            awarded_tasks = task_event(uid, 'messages')
+            notify_task_rewards(vk, peer, uid, awarded_tasks)
+        except Exception as e:
+            print(f'⚠️ Ошибка обновления заданий по сообщениям пользователя {uid}: {e}')
         claim_power_for_messages(uid)
         
         # Мут
@@ -231,7 +237,7 @@ for event in longpoll.listen():
             
         # Обработка команд
         if text.lower().startswith('лл '):
-            handle_command(text[3:].strip().lower(), uid, peer, vk, text)
+            handle_command(text[3:].strip(), uid, peer, vk, text)
             
     except Exception as e:
         print(f'⚠️ Ошибка обработки события: {e}')

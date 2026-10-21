@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv('VK_TOKEN', 'YOUR_VK_TOKEN_HERE')
+# Optional user/service token used only for photos.get during RP album sync.
+RP_PHOTO_TOKEN = os.getenv('RP_PHOTO_TOKEN', '').strip()
 GROUP_ID = int(os.getenv('VK_GROUP_ID', '240896963'))
 CREATOR_ID = int(os.getenv('CREATOR_ID', '750158017'))
 

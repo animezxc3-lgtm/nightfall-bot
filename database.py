@@ -60,20 +60,8 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS chat_message_stats (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, date TEXT NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY(peer_id, user_id, date));
         CREATE TABLE IF NOT EXISTS chat_settings (peer_id INTEGER PRIMARY KEY, welcome_message TEXT DEFAULT '', welcome_photo TEXT DEFAULT '', cleanup_enabled INTEGER DEFAULT 0, casino_enabled INTEGER DEFAULT 1, mute_enabled INTEGER DEFAULT 0, duel_enabled INTEGER DEFAULT 1, broadcast_enabled INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS relationships (user_id INTEGER PRIMARY KEY, partner_id INTEGER, married INTEGER DEFAULT 0, family_surname TEXT DEFAULT '', relationship_since TEXT);
-        CREATE TABLE IF NOT EXISTS family_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, relation_type TEXT NOT NULL, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS family_children (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER NOT NULL, child_id INTEGER NOT NULL, UNIQUE(parent_id, child_id));
-        CREATE TABLE IF NOT EXISTS relationship_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS marriage_proposals (target_id INTEGER PRIMARY KEY, proposer_id INTEGER NOT NULL, surname TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS warning_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, peer_id INTEGER, is_admin_warning INTEGER DEFAULT 0, created_at TEXT NOT NULL);
-        
-        -- ТАБЛИЦА ПРАВ С ПРАВИЛЬНЫМ КЛЮЧОМ
-        CREATE TABLE IF NOT EXISTS admin_chat_rights (
-            peer_id INTEGER NOT NULL, 
-            user_id INTEGER NOT NULL, 
-            level INTEGER NOT NULL, 
-            PRIMARY KEY(peer_id, user_id)
-        );
-        
+        CREATE TABLE IF NOT EXISTS admin_chat_rights (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, level INTEGER NOT NULL, PRIMARY KEY(peer_id, user_id));
         CREATE TABLE IF NOT EXISTS chat_members (peer_id INTEGER NOT NULL, user_id INTEGER NOT NULL, first_join_at TEXT NOT NULL, invited_by INTEGER, PRIMARY KEY(peer_id, user_id));
         CREATE TABLE IF NOT EXISTS global_roles (user_id INTEGER PRIMARY KEY, level INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS duels (opponent_id INTEGER PRIMARY KEY, challenger_id INTEGER NOT NULL, peer_id INTEGER NOT NULL, message_id INTEGER, created_at TEXT NOT NULL);
@@ -86,7 +74,130 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS admin_weekly_stats (user_id INTEGER NOT NULL, week_key TEXT NOT NULL, messages INTEGER DEFAULT 0, invites INTEGER DEFAULT 0, reports INTEGER DEFAULT 0, gems_awarded INTEGER DEFAULT 0, PRIMARY KEY(user_id, week_key));
         CREATE TABLE IF NOT EXISTS hidden_chats (peer_id INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS power_message_rewards (user_id INTEGER PRIMARY KEY, claimed_thresholds INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS family_children (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_id INTEGER NOT NULL,
+            child_id INTEGER NOT NULL,
+            UNIQUE(parent_id, child_id)
+        );
+        CREATE TABLE IF NOT EXISTS relationship_proposals (
+            target_id INTEGER PRIMARY KEY,
+            proposer_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS marriage_proposals (
+            target_id INTEGER PRIMARY KEY,
+            proposer_id INTEGER NOT NULL,
+            surname TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS family_proposals (
+            target_id INTEGER PRIMARY KEY,
+            proposer_id INTEGER NOT NULL,
+            relation_type TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS chat_weekly_message_totals (
+            peer_id INTEGER NOT NULL,
+            week_start TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            count INTEGER DEFAULT 0,
+            PRIMARY KEY(peer_id, week_start, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS rp_photos (
+            command TEXT NOT NULL,
+            attachment TEXT NOT NULL,
+            photo_id INTEGER NOT NULL,
+            owner_id INTEGER NOT NULL,
+            synced_at TEXT NOT NULL,
+            PRIMARY KEY(command, photo_id, owner_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rp_photos_command ON rp_photos(command);
+        CREATE TABLE IF NOT EXISTS weekly_tasks (
+            user_id INTEGER PRIMARY KEY,
+            week_key TEXT NOT NULL,
+            task1_json TEXT NOT NULL,
+            task2_json TEXT NOT NULL,
+            completed1 INTEGER DEFAULT 0,
+            completed2 INTEGER DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS task_progress (
+            user_id INTEGER NOT NULL,
+            week_key TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            progress INTEGER DEFAULT 0,
+            PRIMARY KEY(user_id, week_key, task_id)
+        );
         """)
+
+        # CREATE TABLE IF NOT EXISTS does not add columns to an older database.
+        # Ensure columns required by current code exist without deleting user data.
+        required_columns = {
+            'users': {
+                'nickname': "TEXT DEFAULT ''",
+                'soul_gems': 'INTEGER DEFAULT 0',
+                'power': 'INTEGER DEFAULT 0',
+                'coins': 'INTEGER DEFAULT 100',
+                'job': "TEXT DEFAULT 'Отсутствует'",
+                'salary': 'INTEGER DEFAULT 0',
+                'work_days': 'INTEGER DEFAULT 0',
+                'housing': "TEXT DEFAULT 'Отсутствует'",
+                'car': "TEXT DEFAULT 'Отсутствует'",
+                'phone': "TEXT DEFAULT 'Отсутствует'",
+                'role': "TEXT DEFAULT 'Участник'",
+                'rights': "TEXT DEFAULT 'Участник'",
+                'warnings': 'INTEGER DEFAULT 0',
+                'admin_warnings': 'INTEGER DEFAULT 0',
+                'join_date': 'TEXT',
+                'messages_total': 'INTEGER DEFAULT 0',
+                'banned': 'INTEGER DEFAULT 0',
+                'job_level': 'INTEGER DEFAULT 0',
+                'job_exp': 'INTEGER DEFAULT 0',
+                'job_last_work': 'TEXT',
+                'family_surname': "TEXT DEFAULT ''",
+                'profile_image': "TEXT DEFAULT ''",
+                'custom_role': "TEXT DEFAULT ''",
+                'last_message_at': 'TEXT',
+                'status': "TEXT DEFAULT ''",
+                'gif_link': "TEXT DEFAULT ''",
+                'salary_multiplier': 'REAL DEFAULT 1.0',
+            },
+            'chat_settings': {
+                'welcome_message': "TEXT DEFAULT ''",
+                'welcome_photo': "TEXT DEFAULT ''",
+                'cleanup_enabled': 'INTEGER DEFAULT 0',
+                'casino_enabled': 'INTEGER DEFAULT 1',
+                'mute_enabled': 'INTEGER DEFAULT 0',
+                'duel_enabled': 'INTEGER DEFAULT 1',
+                'broadcast_enabled': 'INTEGER DEFAULT 0',
+            },
+            'warning_events': {
+                'peer_id': 'INTEGER',
+                'is_admin_warning': 'INTEGER DEFAULT 0',
+                'created_at': 'TEXT',
+            },
+            'chat_pins': {
+                'conversation_message_id': 'INTEGER',
+                'message_id': 'INTEGER',
+                'updated_at': "TEXT DEFAULT ''",
+            },
+            'relationships': {
+                'partner_id': 'INTEGER',
+                'married': 'INTEGER DEFAULT 0',
+                'family_surname': "TEXT DEFAULT ''",
+                'relationship_since': 'TEXT',
+            },
+        }
+        for table_name, columns in required_columns.items():
+            existing = {
+                row[1] for row in c.execute(f"PRAGMA table_info({table_name})").fetchall()
+            }
+            for column_name, column_type in columns.items():
+                if column_name not in existing:
+                    c.execute(
+                        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+                    )
 
 def user_exists(user_id):
     with db_cursor() as (_, c):
@@ -114,19 +225,19 @@ def add_message_count(user_id, peer_id):
         c.execute("INSERT INTO chat_message_stats(peer_id, user_id, date, count) VALUES(?,?,?,1) ON CONFLICT(peer_id, user_id, date) DO UPDATE SET count = count + 1", (peer_id, user_id, today))
         c.execute("UPDATE users SET messages_total = messages_total + 1, last_message_at = CURRENT_TIMESTAMP WHERE user_id=?", (user_id,))
 
-# ЖЕСТКАЯ ЗАПИСЬ ПРАВ
-def set_admin_level(peer_id, user_id, level, role_name):
-    with db_cursor(True) as (_, c):
-        c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
-        try: lvl = int(level)
-        except: lvl = 0
-        if lvl > 0:
-            c.execute("INSERT INTO admin_chat_rights(peer_id, user_id, level) VALUES(?,?,?)", (peer_id, user_id, lvl))
-
 def get_admin_level_for_chat(peer_id, user_id):
     with db_cursor() as (_, c):
-        r = c.execute("SELECT level FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id)).fetchone()
-        return int(r[0]) if r else 0
+        try:
+            r = c.execute("SELECT MAX(level) FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id)).fetchone()
+            return int(r[0]) if r and r[0] is not None else 0
+        except: return 0
+
+def set_admin_level(peer_id, user_id, level, role_name):
+    with db_cursor(True) as (_, c):
+        try: lvl = int(level)
+        except: lvl = 0
+        if lvl <= 0: c.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
+        else: c.execute("INSERT INTO admin_chat_rights(peer_id,user_id,level) VALUES(?,?,?) ON CONFLICT(peer_id,user_id) DO UPDATE SET level=excluded.level", (peer_id, user_id, lvl))
 
 def get_admins_for_chat(peer_id):
     with db_cursor() as (_, c):
@@ -421,7 +532,7 @@ def find_chats_by_number(vk, number):
         for x in data:
             pid = int(x.get('peer', {}).get('id'))
             names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
-    except Exception: return []
+    except: return []
     result = []
     target = str(number).strip().lower()
     for pid, title in names.items():
@@ -552,3 +663,204 @@ def get_chat_user_week_messages(peer_id, user_id, start_date, end_date):
     with db_cursor() as (_, c):
         r = c.execute("SELECT SUM(count) FROM chat_message_stats WHERE peer_id=? AND user_id=? AND date >= ? AND date <= ?", (peer_id, user_id, start_date, end_date)).fetchone()
         return r[0] if r and r[0] else 0
+
+def replace_rp_photos(command, photos):
+    """Atomically replace the cached photo list for one RP command."""
+    normalized = []
+    for attachment, photo_id, owner_id in photos:
+        if not attachment or photo_id is None or owner_id is None:
+            continue
+        normalized.append((str(command), str(attachment), int(photo_id), int(owner_id)))
+
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM rp_photos WHERE command=?", (command,))
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.executemany(
+            """INSERT OR IGNORE INTO rp_photos
+               (command, attachment, photo_id, owner_id, synced_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            [(cmd, attachment, photo_id, owner_id, now)
+             for cmd, attachment, photo_id, owner_id in normalized],
+        )
+
+
+def get_random_rp_photo(command):
+    with db_cursor() as (_, c):
+        row = c.execute(
+            "SELECT attachment FROM rp_photos WHERE command=? ORDER BY RANDOM() LIMIT 1",
+            (command,),
+        ).fetchone()
+        return row[0] if row else None
+
+
+def get_rp_photo_count(command):
+    with db_cursor() as (_, c):
+        row = c.execute(
+            "SELECT COUNT(*) FROM rp_photos WHERE command=?",
+            (command,),
+        ).fetchone()
+        return int(row[0] if row else 0)
+
+
+# Relationship, marriage, and family proposal persistence.
+def create_relationship_proposal(target_id, proposer_id):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c):
+        c.execute(
+            """INSERT INTO relationship_proposals(target_id, proposer_id, created_at)
+               VALUES(?, ?, ?)
+               ON CONFLICT(target_id) DO UPDATE SET
+                   proposer_id=excluded.proposer_id,
+                   created_at=excluded.created_at""",
+            (int(target_id), int(proposer_id), now),
+        )
+
+
+def get_relationship_proposal(target_id):
+    with db_cursor() as (_, c):
+        return c.execute(
+            "SELECT proposer_id, created_at FROM relationship_proposals WHERE target_id=?",
+            (int(target_id),),
+        ).fetchone()
+
+
+def delete_relationship_proposal(target_id):
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM relationship_proposals WHERE target_id=?", (int(target_id),))
+
+
+def create_marriage_proposal(target_id, proposer_id, surname):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c):
+        c.execute(
+            """INSERT INTO marriage_proposals(target_id, proposer_id, surname, created_at)
+               VALUES(?, ?, ?, ?)
+               ON CONFLICT(target_id) DO UPDATE SET
+                   proposer_id=excluded.proposer_id,
+                   surname=excluded.surname,
+                   created_at=excluded.created_at""",
+            (int(target_id), int(proposer_id), str(surname), now),
+        )
+
+
+def get_marriage_proposal(target_id):
+    with db_cursor() as (_, c):
+        return c.execute(
+            "SELECT proposer_id, surname, created_at FROM marriage_proposals WHERE target_id=?",
+            (int(target_id),),
+        ).fetchone()
+
+
+def delete_marriage_proposal(target_id):
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM marriage_proposals WHERE target_id=?", (int(target_id),))
+
+
+def create_family_proposal(target_id, proposer_id, relation_type):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c):
+        c.execute(
+            """INSERT INTO family_proposals(target_id, proposer_id, relation_type, created_at)
+               VALUES(?, ?, ?, ?)
+               ON CONFLICT(target_id) DO UPDATE SET
+                   proposer_id=excluded.proposer_id,
+                   relation_type=excluded.relation_type,
+                   created_at=excluded.created_at""",
+            (int(target_id), int(proposer_id), str(relation_type), now),
+        )
+
+
+def get_family_proposal(target_id):
+    with db_cursor() as (_, c):
+        return c.execute(
+            "SELECT proposer_id, relation_type, created_at FROM family_proposals WHERE target_id=?",
+            (int(target_id),),
+        ).fetchone()
+
+
+def delete_family_proposal(target_id):
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM family_proposals WHERE target_id=?", (int(target_id),))
+
+
+# Weekly tasks persistence.
+def get_weekly_tasks(user_id):
+    with db_cursor() as (_, c):
+        row = c.execute(
+            """SELECT week_key, task1_json, task2_json, completed1, completed2
+               FROM weekly_tasks WHERE user_id=?""",
+            (int(user_id),),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        tasks = [json.loads(row[1]), json.loads(row[2])]
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return {
+        'user_id': int(user_id),
+        'week_key': row[0],
+        'tasks': tasks,
+        'completed': [bool(row[3]), bool(row[4])],
+    }
+
+
+def save_weekly_tasks(user_id, week_key, task1, task2):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with db_cursor(True) as (_, c):
+        c.execute(
+            """INSERT INTO weekly_tasks
+               (user_id, week_key, task1_json, task2_json, completed1, completed2, updated_at)
+               VALUES (?, ?, ?, ?, 0, 0, ?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   week_key=excluded.week_key,
+                   task1_json=excluded.task1_json,
+                   task2_json=excluded.task2_json,
+                   completed1=0,
+                   completed2=0,
+                   updated_at=excluded.updated_at""",
+            (
+                int(user_id),
+                str(week_key),
+                json.dumps(task1, ensure_ascii=False),
+                json.dumps(task2, ensure_ascii=False),
+                now,
+            ),
+        )
+
+
+def weekly_task_is_completed(user_id, slot):
+    data = get_weekly_tasks(user_id)
+    return bool(data and 0 <= int(slot) < len(data['completed']) and data['completed'][int(slot)])
+
+
+def complete_weekly_task(user_id, slot):
+    slot = int(slot)
+    if slot not in (0, 1):
+        raise ValueError("slot must be 0 or 1")
+    column = "completed1" if slot == 0 else "completed2"
+    with db_cursor(True) as (_, c):
+        c.execute(
+            f"UPDATE weekly_tasks SET {column}=1, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+            (int(user_id),),
+        )
+
+
+def get_task_progress(user_id, week_key, task_id):
+    with db_cursor() as (_, c):
+        row = c.execute(
+            "SELECT progress FROM task_progress WHERE user_id=? AND week_key=? AND task_id=?",
+            (int(user_id), str(week_key), str(task_id)),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+
+def set_task_progress(user_id, week_key, task_id, progress):
+    with db_cursor(True) as (_, c):
+        c.execute(
+            """INSERT INTO task_progress(user_id, week_key, task_id, progress)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id, week_key, task_id) DO UPDATE SET
+                   progress=excluded.progress""",
+            (int(user_id), str(week_key), str(task_id), max(0, int(progress))),
+        )

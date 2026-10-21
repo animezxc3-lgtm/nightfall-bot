@@ -1,5 +1,6 @@
 import random, re
-from config import RP_ALBUMS, GROUP_ID
+from config import RP_ALBUMS
+from database import get_random_rp_photo
 
 
 # Шаблоны только с {target}. Actor добавляется сверху в message_handlers.
@@ -45,14 +46,13 @@ SELF_RESPONSES = {
 }
 
 
-def get_random_photo_from_album(vk, album_id):
+def get_random_photo_from_album(command):
+    """Returns a cached VK attachment; never calls photos.get with the group token."""
     try:
-        photos = vk.photos.get(owner_id=-GROUP_ID, album_id=album_id, count=50)['items']
-        if photos:
-            return max(random.choice(photos)['sizes'], key=lambda x: x['width'] * x['height'])['url']
+        return get_random_rp_photo(command)
     except Exception as e:
-        print('⚠️ RP photo:', e)
-    return None
+        print(f'⚠️ RP photo cache ({command}): {e}')
+        return None
 
 
 def _extract_target_id(text):
@@ -96,5 +96,5 @@ def handle_rp_command(command, user_id, peer_id, vk, text, get_user):
     body = random.choice(templates).format(target=target_mention)
     # actor добавляется сверху в _send
     result = f'{body}'
-    photo = get_random_photo_from_album(vk, RP_ALBUMS.get(command)) if RP_ALBUMS.get(command) else None
+    photo = get_random_photo_from_album(command) if RP_ALBUMS.get(command) else None
     return result, photo

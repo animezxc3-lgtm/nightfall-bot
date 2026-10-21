@@ -54,11 +54,11 @@ def get_profile_data(user_id, peer_id=None):
     days = get_days_in_relationship(user_id) if partner else None
     days_line = str(days) if days is not None else '—'
 
-    level = 0
     try:
-        if peer_id: level = get_admin_level(user_id, peer_id)
+        # With peer_id=None, global roles (and creator status) must still display.
+        level = get_admin_level(user_id, peer_id)
     except Exception:
-        pass
+        level = 0
         
     rights_display = ROLE_NAMES.get(level, 'Участник')
     warning_count = get_warning_count(user_id, peer_id)

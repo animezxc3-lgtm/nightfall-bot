@@ -46,10 +46,15 @@ def get_children(uid):
 def get_parents(uid):
     with db_cursor() as (_,c): c.execute('SELECT parent_id FROM family_children WHERE child_id=? ORDER BY id',(uid,)); return [r[0] for r in c.fetchall()]
 
-def start_relationship(uid,target,vk=None):
-    if not target or target==uid:return False,'Нельзя начать отношения с самим собой.'
-    if get_partner_id(uid) or get_partner_id(target):return False,'Один из пользователей уже состоит в отношениях.'
-    create_relationship_proposal(target,uid); return True,'❤️ предлагает тебе начать отношения!'
+def start_relationship(uid, target, vk=None):
+    if not target or target == uid:
+        return False, 'Нельзя начать отношения с самим собой.'
+    if not get_user(uid) or not get_user(target):
+        return False, 'У одного из пользователей ещё нет профиля.'
+    if get_partner_id(uid) or get_partner_id(target):
+        return False, 'Один из пользователей уже состоит в отношениях.'
+    create_relationship_proposal(target, uid)
+    return True, '❤️ предлагает тебе начать отношения!'
 
 def accept_relationship(target):
     p=get_relationship_proposal(target)
@@ -95,19 +100,57 @@ def reject_marriage(target):
 
 def divorce(uid): return end_relationship(uid) if get_partner_id(uid) else 'У тебя нет супруга/супруги.'
 
-def adopt(parent,child,vk=None):
-    if len(get_children(parent))>=MAX_CHILDREN:return False,'В семье уже 5 детей.'
-    parents=get_parents(child)
-    if len(parents)>=2:return False,'У данного пользователя уже есть родители.'
-    create_family_proposal(child,parent,'ребёнок'); return True,'👪 предлагает тебе стать членом семьи.'
+def adopt(parent, child, vk=None):
+    if not parent or not child or parent == child:
+        return False, 'Нельзя добавить самого себя в семью.'
+    if not get_user(parent) or not get_user(child):
+        return False, 'У одного из пользователей ещё нет профиля.'
+    if child in get_children(parent):
+        return False, 'Этот пользователь уже состоит в твоей семье.'
+    if len(get_children(parent)) >= MAX_CHILDREN:
+        return False, 'В семье уже 5 детей.'
+    parents = get_parents(child)
+    if parent in parents:
+        return False, 'Этот пользователь уже является родителем.'
+    if len(parents) >= 2:
+        return False, 'У данного пользователя уже есть два родителя.'
+
+    # Prevent family cycles: a descendant cannot adopt one of their ancestors.
+    stack = [child]
+    visited = set()
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        if current == parent:
+            return False, 'Нельзя создать циклическую связь в семейном дереве.'
+        stack.extend(get_children(current))
+
+    create_family_proposal(child, parent, 'ребёнок')
+    return True, '👪 предлагает тебе стать членом семьи.'
 
 def accept_family_addition(child):
-    p=get_family_proposal(child)
-    if not p:return 'У тебя нет действующего предложения вступить в семью.'
-    parent,relation,_=p
-    if len(get_children(parent))>=MAX_CHILDREN or len(get_parents(child))>=2: delete_family_proposal(child); return 'Предложение больше недействительно.'
-    with db_cursor(True) as (_,c): c.execute('INSERT INTO family_children(parent_id,child_id) VALUES(?,?) ON CONFLICT DO NOTHING',(parent,child))
-    delete_family_proposal(child); return '👪 Согласие принято! Ты добавлен(а) в семью.'
+    proposal = get_family_proposal(child)
+    if not proposal:
+        return 'У тебя нет действующего предложения вступить в семью.'
+    parent, relation, _ = proposal
+    if (
+        not get_user(parent)
+        or not get_user(child)
+        or len(get_children(parent)) >= MAX_CHILDREN
+        or len(get_parents(child)) >= 2
+        or child in get_children(parent)
+    ):
+        delete_family_proposal(child)
+        return 'Предложение больше недействительно.'
+    with db_cursor(True) as (_, c):
+        c.execute(
+            'INSERT INTO family_children(parent_id, child_id) VALUES(?, ?) ON CONFLICT DO NOTHING',
+            (parent, child),
+        )
+    delete_family_proposal(child)
+    return '👪 Согласие принято! Ты добавлен(а) в семью.'
 
 def reject_family_addition(child):
     if not get_family_proposal(child):return 'У тебя нет действующего предложения вступить в семью.'
@@ -115,7 +158,7 @@ def reject_family_addition(child):
 
 def relinquish(parent,child,vk=None):
     if child not in get_children(parent):return ''
-    with db_cursor(True) as (_,c): c.execute('DELETE FROM family_children WHERE child_id=?',(child,))
+    with db_cursor(True) as (_,c): c.execute('DELETE FROM family_children WHERE parent_id=? AND child_id=?',(parent,child))
     return '🏠 Ребёнок больше не числится в семье.'
 
 def leave_family(uid):
