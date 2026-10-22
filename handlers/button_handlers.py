@@ -272,6 +272,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             '\n'
             '👥 УПРАВЛЕНИЕ:\n'
             'лл админы\n'
+            'лл админ стат\n'
             'лл проверить @user\n'
             'лл снять @user\n'
             'лл выдать права @user <номер_беседы> <должность>\n'
@@ -279,8 +280,8 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл убрать чс адм @user\n'
             '\n'
             '📊 НОРМЫ И ОТЧЁТЫ:\n'
-            'лл норма + @user (только ЗК и выше)\n'
-            'лл норма - @user (только ЗК и выше)\n'
+            'лл норма @user + (только ЗК и выше)\n'
+            'лл норма @user - (только ЗК и выше)\n'
             '\n'
             '👥 ТВИНКИ:\n'
             'лл твинк @user\n'
@@ -290,7 +291,8 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             '🖼 ОФОРМЛЕНИЕ:\n'
             'лл аватар @user <ID фото>\n'
             'лл обновить рп\n'
-            'лл изменить приветствие <ID фото> <текст>\n'
+            'лл изменить приветствие <ID фото из альбома> <текст>\n'
+            'Можно также вставить photo-owner_id_photo_id или ссылку на фото.\n'
             'лл приветствие\n'
             '\n'
             '⚙️ НАСТРОЙКИ БЕСЕДЫ:\n'
@@ -307,7 +309,8 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             '\n'
             '📊 СТАТИСТИКА:\n'
             'лл беседа\n'
-            'лл беседы',
+            'лл беседы\n'
+            'лл админ стат',
             menu_keyboard(True),
         )
         return

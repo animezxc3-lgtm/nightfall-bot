@@ -138,6 +138,29 @@ def migrate_database():
             progress INTEGER DEFAULT 0,
             PRIMARY KEY(user_id, week_key, task_id)
         );
+        CREATE TABLE IF NOT EXISTS daily_task_slots (
+            user_id INTEGER PRIMARY KEY,
+            extra_slots INTEGER NOT NULL DEFAULT 0 CHECK(extra_slots BETWEEN 0 AND 2)
+        );
+        CREATE TABLE IF NOT EXISTS daily_task_instances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            task_date TEXT NOT NULL,
+            scope_peer_id INTEGER NOT NULL DEFAULT 0,
+            task_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            goal INTEGER NOT NULL,
+            coins INTEGER NOT NULL,
+            power INTEGER NOT NULL DEFAULT 0,
+            gems INTEGER NOT NULL DEFAULT 0,
+            progress INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_daily_task_user_date ON daily_task_instances(user_id, task_date, status);
+        CREATE INDEX IF NOT EXISTS idx_daily_task_scope ON daily_task_instances(user_id, scope_peer_id, task_date);
         """)
 
         # CREATE TABLE IF NOT EXISTS does not add columns to an older database.
@@ -565,7 +588,7 @@ def get_first_inviter(user_id):
 def record_chat_join(peer_id, user_id, invited_by=None):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_, c):
-        c.execute("INSERT INTO chat_members(peer_id,user_id,first_join_at,invited_by) VALUES(?,?,?,?) ON CONFLICT(peer_id,user_id) DO NOTHING", (peer_id, user_id, now, invited_by))
+        c.execute("INSERT INTO chat_members(peer_id,user_id,first_join_at,invited_by) VALUES(?,?,?,?) ON CONFLICT(peer_id,user_id) DO UPDATE SET invited_by=COALESCE(chat_members.invited_by, excluded.invited_by)", (peer_id, user_id, now, invited_by))
 
 def get_chat_join_date(peer_id, user_id):
     if not peer_id or peer_id <= 2000000000: return None
@@ -916,3 +939,38 @@ def set_task_progress(user_id, week_key, task_id, progress):
                    progress=excluded.progress""",
             (int(user_id), str(week_key), str(task_id), max(0, int(progress))),
         )
+
+
+def get_admin_chat_stats(peer_id, user_id):
+    """Message and invite counts for an admin within one conversation."""
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    week = _week_start(now).strftime("%Y-%m-%d")
+    month = _month_start(now).strftime("%Y-%m-%d")
+    with db_cursor() as (_, c):
+        def count_messages(cond, params=()):
+            row = c.execute(
+                f"SELECT COALESCE(SUM(count), 0) FROM chat_message_stats WHERE peer_id=? AND user_id=? AND {cond}",
+                (int(peer_id), int(user_id), *params),
+            ).fetchone()
+            return int(row[0] or 0)
+        def count_invites(cond, params=()):
+            row = c.execute(
+                f"SELECT COUNT(*) FROM chat_members WHERE peer_id=? AND invited_by=? AND substr(first_join_at,1,10) {cond}",
+                (int(peer_id), int(user_id), *params),
+            ).fetchone()
+            return int(row[0] or 0)
+        return {
+            'messages': {
+                'today': count_messages('date = ?', (today,)),
+                'week': count_messages('date >= ?', (week,)),
+                'month': count_messages('date >= ?', (month,)),
+                'total': count_messages('1=1'),
+            },
+            'invites': {
+                'today': count_invites('= ?', (today,)),
+                'week': count_invites('>= ?', (week,)),
+                'month': count_invites('>= ?', (month,)),
+                'total': count_invites('IS NOT NULL'),
+            },
+        }

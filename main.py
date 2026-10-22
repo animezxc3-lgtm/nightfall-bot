@@ -1,4 +1,4 @@
-import json, threading, time
+import json, threading, time, re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import vk_api
@@ -91,8 +91,12 @@ def send_welcome(peer_id, user_id):
     except Exception:
         name = 'участник'
     welcome, photo = get_welcome_data(peer_id)
+    # Keep legacy placeholders and support (user) anywhere in the greeting.
+    # VK's [idN|Name] syntax creates a clickable mention rather than plain text.
+    mention = f'[id{user_id}|{name}]'
     text = welcome.replace('{name}', name).replace('{id}', str(user_id))
     text = text.replace('{profile}', f'https://vk.com/id{user_id}')
+    text = re.sub(r'\(user\)', lambda _m: mention, text, flags=re.IGNORECASE)
     args = {'peer_id': peer_id, 'random_id': 0, 'message': text}
     if photo:
         args['attachment'] = photo
@@ -239,8 +243,13 @@ for event in longpoll.listen():
                 except Exception:
                     create_user(invited_uid, 'Участник')
             ensure_chat(peer)
-            if get_chat_join_date(peer, invited_uid) is None:
-                record_chat_join(peer, invited_uid, invited_by=uid)
+            # Fill inviter even if GROUP_JOIN recorded the member first.
+            record_chat_join(peer, invited_uid, invited_by=uid)
+            try:
+                awarded_tasks = task_event(uid, 'invite', amount=1, peer_id=peer)
+                notify_task_rewards(vk, peer, uid, awarded_tasks)
+            except Exception as e:
+                print(f'⚠️ Ошибка обновления админского задания на приглашение: {e}')
             send_welcome(peer, invited_uid)
             continue
 
@@ -273,7 +282,7 @@ for event in longpoll.listen():
         grant_starting_coins_to_chat_members(peer)
         add_message_count(uid, peer)
         try:
-            awarded_tasks = task_event(uid, 'messages')
+            awarded_tasks = task_event(uid, 'messages', peer_id=peer)
             notify_task_rewards(vk, peer, uid, awarded_tasks)
         except Exception as e:
             print(f'⚠️ Ошибка обновления заданий по сообщениям пользователя {uid}: {e}')

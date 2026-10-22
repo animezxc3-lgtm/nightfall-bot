@@ -1,11 +1,11 @@
 import re
-from config import CREATOR_ID, GROUP_ID, APPLICATIONS_PEER_ID, RP_ALBUMS, RP_PHOTO_TOKEN
+from config import CREATOR_ID, GROUP_ID, APPLICATIONS_PEER_ID, RP_ALBUMS, RP_PHOTO_TOKEN, PROFILE_WELCOME_ALBUM_ID, PROFILE_WELCOME_ALBUM_OWNER
 from response_context import get_user_id, get_exclude_actor
 # Явные импорты вместо "from database import *"
 from database import (
     get_global_role, set_global_role, get_admin_level_for_chat, set_admin_level, get_admins_for_chat,
     get_user, create_user, get_first_inviter, is_banned, is_in_admin_blacklist,
-    get_warning_stats, get_kick_stats, get_messages_stats, get_last_message_at,
+    get_warning_stats, get_kick_stats, get_messages_stats, get_last_message_at, get_admin_chat_stats,
     add_warning, add_kick_event, remove_warning, clear_warnings,
     ban_user, unban_user, get_all_chats, get_banned_users,
     set_welcome_message, get_welcome_data, get_feature, get_broadcast_chats,
@@ -50,9 +50,58 @@ COMMAND_MIN_LEVEL = {
     'переключить мут': 5, 'переключить чистку': 5, 'переключить казино': 5, 'переключить дуэль': 5,
     'переключить рассылку': 5,
     'чс адм': 5, 'убрать чс адм': 5,
-    'беседа': 1, 'беседы': 1,
+    'беседа': 1, 'беседы': 1, 'админ стат': 1,
     'выдать права': 5, 'аватар': 4, 'обновить рп': 5,
 }
+
+
+def _parse_welcome_photo_input(raw_text):
+    """Return (remaining_message, attachment) for a photo from the configured album.
+
+    The admin can provide either the numeric photo ID copied from the album,
+    or a full VK photo attachment/link. Numeric IDs use the configured album
+    owner; full attachment tokens retain their own owner and optional access key.
+    """
+    value = (raw_text or '').strip()
+    attachment_re = re.compile(
+        r'(?<![A-Za-z0-9])photo(-?\d+)_(-?\d+)(?:_([A-Za-z0-9]+))?(?![A-Za-z0-9])',
+        re.IGNORECASE,
+    )
+    # If a whole URL was pasted, remove the URL as a unit rather than leaving
+    # a dangling "https://vk.com/" in the greeting text.
+    url_re = re.compile(
+        r'https?://[^\s]*?photo(-?\d+)_(-?\d+)(?:_([A-Za-z0-9]+))?[^\s]*',
+        re.IGNORECASE,
+    )
+    url_match = url_re.search(value)
+    if url_match:
+        owner_id, photo_id, access_key = url_match.groups()
+        attachment = f'photo{int(owner_id)}_{int(photo_id)}'
+        if access_key:
+            attachment += f'_{access_key}'
+        message = (value[:url_match.start()] + ' ' + value[url_match.end():]).strip()
+        message = re.sub(r'\s+', ' ', message)
+        return message, attachment
+
+    match = attachment_re.search(value)
+    if match:
+        owner_id, photo_id, access_key = match.groups()
+        attachment = f'photo{int(owner_id)}_{int(photo_id)}'
+        if access_key:
+            attachment += f'_{access_key}'
+        message = (value[:match.start()] + ' ' + value[match.end():]).strip()
+        message = re.sub(r'\s+', ' ', message)
+        return message, attachment
+
+    # Legacy input: the first token is only the numeric photo ID copied from
+    # the configured welcome album. Build the actual VK attachment identifier.
+    match = re.match(r'^([0-9]+)(?:\s+|$)(.*)$', value, re.DOTALL)
+    if match:
+        photo_id, message = match.group(1), match.group(2).strip()
+        owner_id = int(PROFILE_WELCOME_ALBUM_OWNER)
+        return message, f'photo{owner_id}_{int(photo_id)}'
+
+    return value, ''
 
 
 def _has_number_in_title(title):
@@ -666,6 +715,31 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             return True
 
     # ========================================================
+    # СТАТИСТИКА АДМИНИСТРАТОРА
+    # ========================================================
+    if key == 'админ стат':
+        stats = get_admin_chat_stats(peer_id, user_id)
+        msg = stats['messages']
+        inv = stats['invites']
+        lines = [
+            '📊 Статистика администратора',
+            '',
+            '👥 Приглашённые участники:',
+            f'Сегодня: {inv["today"]}',
+            f'За неделю: {inv["week"]}',
+            f'За месяц: {inv["month"]}',
+            f'За всё время: {inv["total"]}',
+            '',
+            '💬 Сообщения:',
+            f'Сегодня: {msg["today"]}',
+            f'За неделю: {msg["week"]}',
+            f'За месяц: {msg["month"]}',
+            f'За всё время: {msg["total"]}',
+        ]
+        _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
+        return True
+
+    # ========================================================
     # БАНСТАТ
     # ========================================================
     if key == 'банстат':
@@ -903,16 +977,19 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
     # ПРИВЕТСТВИЕ
     # ========================================================
     if key == 'изменить приветствие':
-        rest = raw_rest
-        photo = ''
-        m = re.match(r'^(\d+)\s+(.+)$', rest)
-        if m:
-            photo_id, text = m.group(1), m.group(2).strip()
-            photo = f'photo-{GROUP_ID}_{photo_id}'
-            rest = text
-        if not rest:
+        # Photos are selected from PROFILE_WELCOME_ALBUM_ID. The command accepts
+        # either the numeric photo ID copied from that album or a full VK photo
+        # link/attachment; the stored value is always a VK attachment token.
+        welcome_text, photo = _parse_welcome_photo_input(raw_rest)
+        if not welcome_text:
+            _send(
+                vk, peer_id,
+                f'Укажи ID фотографии из альбома {PROFILE_WELCOME_ALBUM_ID} и текст приветствия. '
+                'Можно также вставить полный идентификатор photo-owner_id_photo_id.',
+                actor_inline=False,
+            )
             return True
-        set_welcome_message(peer_id, rest, photo)
+        set_welcome_message(peer_id, welcome_text, photo)
         _send(vk, peer_id, 'Приветствие изменено.', actor_inline=False)
         return True
 

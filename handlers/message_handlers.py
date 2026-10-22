@@ -2,7 +2,7 @@ import json, re
 from config import CREATOR_ID, ALLOWED_IN_DM
 from database import (
     get_user, create_user, user_exists, transfer_coins, debit_gems, 
-    update_coins, clear_warnings, set_nickname, get_owner, 
+    update_coins, update_gems, clear_warnings, set_nickname, get_owner, 
     get_twinks, remove_twink, add_twink, is_twink, 
     get_feature, get_application, delete_application, 
     upsert_application, set_gif_link, set_status, 
@@ -10,7 +10,7 @@ from database import (
     increase_salary_multiplier, get_salary_multiplier, 
     add_admin_stat, has_active_duel, create_duel, get_duel_for_opponent, delete_duel
 )
-from admin_commands import handle_admin_command, get_admin_level
+from admin_commands import handle_admin_command, get_admin_level, get_display_admin_level
 from games import casino
 from wheel import spin_wheel, draw_wheel
 from vk_upload import upload_photo
@@ -31,7 +31,8 @@ from relationships import (
 from property_shop import buy_property, get_items
 from response_context import set_user, get_user_id, get_exclude_actor
 from jobs.professions import PROFESSIONS
-from tasks import format_tasks, event as task_event, notify_task_rewards
+from tasks import (format_tasks, format_assigned_task, event as task_event, notify_task_rewards,
+                   get_extra_task_slots, buy_extra_task_slot)
 
 
 def _user_link(vk, user_id, fallback='Пользователь'):
@@ -57,9 +58,9 @@ def _send(vk, peer_id, msg, keyboard=None, attachment=None, exclude_actor=False)
 
 
 
-def _record_task_event(vk, peer_id, user_id, kind, amount=1):
+def _record_task_event(vk, peer_id, user_id, kind, amount=1, data=None):
     try:
-        awarded = task_event(user_id, kind, amount=amount)
+        awarded = task_event(user_id, kind, amount=amount, data=data, peer_id=peer_id)
         notify_task_rewards(vk, peer_id, user_id, awarded)
     except Exception as e:
         print(f'⚠️ Ошибка обновления задания ({kind}, user={user_id}): {e}')
@@ -80,6 +81,8 @@ VIP_PRICES = {
     2: 100,  # Статус
     3: 65,   # Снять предупреждение
     4: 100,  # Множитель зарплаты
+    5: 100,  # Второй слот заданий навсегда
+    6: 100,  # Третий слот заданий навсегда
 }
 
 
@@ -89,7 +92,9 @@ def vip_shop_text():
         '1. GIF/видео в профиль — 100 💎\n'
         '2. Статус в профиле — 100 💎\n'
         '3. Снять предупреждение — 65 💎\n'
-        '4. Повысить множитель зарплаты — 100 💎\n\n'
+        '4. Повысить множитель зарплаты — 100 💎\n'
+        '5. Второй слот ежедневных заданий навсегда — 100 💎\n'
+        '6. Третий слот ежедневных заданий навсегда — 100 💎\n\n'
         'Покупка: `лл купить <номер>`'
     )
 
@@ -106,7 +111,7 @@ def handle_command(command, user_id, peer_id, vk, text):
     command = raw_command.lower()
     if not command:
         return
-    list_commands = {'меню', 'магазин', 'беседы', 'админы', 'банстат', 'твинки', 'задания'}
+    list_commands = {'меню', 'магазин', 'беседы', 'админы', 'банстат', 'твинки', 'задание', 'задания'}
     set_user(user_id, command.split()[0] in list_commands)
     is_chat = peer_id > 2000000000
     if not is_chat:
@@ -145,6 +150,15 @@ def handle_command(command, user_id, peer_id, vk, text):
         if n == 4 and _check_salary_mult_cap(user_id):
             _send(vk, peer_id, 'Множитель уже максимальный (×7).', exclude_actor=True)
             return
+        if n in (5, 6):
+            owned_slots = get_extra_task_slots(user_id)
+            wanted = n - 4  # item 5 opens slot 2 (one extra); item 6 opens slot 3
+            if owned_slots >= wanted:
+                _send(vk, peer_id, 'Этот слот уже открыт.', exclude_actor=True)
+                return
+            if wanted != owned_slots + 1:
+                _send(vk, peer_id, 'Сначала открой предыдущий слот.', exclude_actor=True)
+                return
 
         if not debit_gems(user_id, price):
             _send(vk, peer_id, 'Недостаточно Камней души.', exclude_actor=True)
@@ -171,6 +185,12 @@ def handle_command(command, user_id, peer_id, vk, text):
             new_mult = increase_salary_multiplier(user_id, 0.5, 7.0)
             _send(vk, peer_id, f'Множитель зарплаты повышен. Теперь ×{new_mult}.', exclude_actor=True)
             return
+        if n in (5, 6):
+            ok, message = buy_extra_task_slot(user_id, n - 3)
+            if not ok:
+                update_gems(user_id, price)
+            _send(vk, peer_id, message, exclude_actor=True)
+            return
         return
 
     # ─── ПРОФИЛЬ ────────────────────────────────────────
@@ -182,6 +202,7 @@ def handle_command(command, user_id, peer_id, vk, text):
             return
         profile_text, profile_attachment = get_profile_data(target, peer_id)
         _send(vk, peer_id, profile_text, attachment=profile_attachment, exclude_actor=True)
+        _record_task_event(vk, peer_id, user_id, 'profile' if target == user_id else 'other_profile')
         return
 
     if command == 'баланс' or command.startswith('баланс '):
@@ -191,10 +212,16 @@ def handle_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
             return
         _send(vk, peer_id, get_balance(target, vk), exclude_actor=True)
+        if target == user_id:
+            _record_task_event(vk, peer_id, user_id, 'balance')
+        return
+
+    if command == 'задание':
+        _send(vk, peer_id, format_assigned_task(user_id, peer_id), exclude_actor=True)
         return
 
     if command == 'задания':
-        _send(vk, peer_id, format_tasks(user_id), exclude_actor=True)
+        _send(vk, peer_id, format_tasks(user_id, peer_id), exclude_actor=True)
         return
 
     if command.startswith('ник '):
@@ -214,6 +241,8 @@ def handle_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, 'Пользователь не найден.')
             return
         _send(vk, peer_id, get_activity(target))
+        if target == user_id:
+            _record_task_event(vk, peer_id, user_id, 'activity')
         return
 
     # ─── ЛЛ НОРМА ────────────────────────────────────────
@@ -450,7 +479,7 @@ def handle_command(command, user_id, peer_id, vk, text):
             _send(vk, peer_id, 'У вас недостаточно монет.', exclude_actor=True)
             return
         _send(vk, peer_id, f'Передано {amount:,} 🪙 пользователю {_user_link(vk, target)}.')
-        _record_task_event(vk, peer_id, user_id, 'transfer')
+        _record_task_event(vk, peer_id, user_id, 'transfer', amount=1, data={'transfer_amount': amount})
         return
 
     # ─── РАБОТА (статистика) ────────────────────────────
@@ -622,6 +651,9 @@ def handle_command(command, user_id, peer_id, vk, text):
             if rp_text:
                 _send(vk, peer_id, rp_text, attachment=rp_photo)
                 _record_task_event(vk, peer_id, user_id, 'rp')
+                rp_target = _target(text)
+                if rp_target and rp_target == get_partner_id(user_id):
+                    _record_task_event(vk, peer_id, user_id, 'partner_rp')
         return
 
         # ─── МАГАЗИН ────────────────────────────────────────
@@ -629,6 +661,7 @@ def handle_command(command, user_id, peer_id, vk, text):
         from keyboards import get_shop_menu
         is_adm = get_admin_level(user_id, peer_id) >= 1
         _send(vk, peer_id, '🛒 Магазин\n\nЧто вас интересует?', get_shop_menu(is_adm), exclude_actor=True)
+        _record_task_event(vk, peer_id, user_id, 'shop')
         return
 
     m = re.match(r'^(дом|машина|телефон)\s+(\d+)$', command)
@@ -684,22 +717,27 @@ def handle_command(command, user_id, peer_id, vk, text):
 # ============ ЛЛ НОРМА ============
 
 def handle_norma(command, user_id, peer_id, vk):
-    """Set an admin's weekly report status; only level 4+ may do so."""
-    command = command.strip()
-    parts = command.split(maxsplit=2)
-    if len(parts) < 2 or parts[1] not in ('+', '-'):
-        _send(vk, peer_id, 'Формат: `лл норма + @user` или `лл норма - @user`', exclude_actor=True)
+    """Set an admin's weekly report status. Supports `норма @user +` and legacy order."""
+    parts = command.strip().split()
+    if not parts or parts[0].lower() != 'норма':
         return
 
-    sign = parts[1]
-    if len(parts) < 3:
-        _send(vk, peer_id, 'Нельзя ставить норму самому себе. Укажи пользователя: `лл норма + @user`', exclude_actor=True)
+    # Preferred syntax: лл норма @user + / лл норма @user -.
+    # Keep the old syntax (лл норма + @user) working for compatibility.
+    sign = None
+    target_text = None
+    if len(parts) >= 3 and parts[1] in ('+', '-'):
+        sign, target_text = parts[1], ' '.join(parts[2:])
+    elif len(parts) >= 3 and parts[-1] in ('+', '-'):
+        sign, target_text = parts[-1], ' '.join(parts[1:-1])
+
+    if not sign or not target_text:
+        _send(vk, peer_id, 'Формат: `лл норма @user +` или `лл норма @user -`', exclude_actor=True)
         return
 
-    target_text = parts[2]
     target = _target(target_text)
     if not target:
-        _send(vk, peer_id, 'Не удалось распознать пользователя.', exclude_actor=True)
+        _send(vk, peer_id, 'Не удалось распознать пользователя. Укажи упоминание @user.', exclude_actor=True)
         return
     if target == user_id:
         _send(vk, peer_id, 'Нельзя ставить норму самому себе.', exclude_actor=True)
@@ -712,7 +750,11 @@ def handle_norma(command, user_id, peer_id, vk):
     if not get_user(target):
         _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
         return
-    if get_admin_level(target, peer_id) < 2:
+
+    # Roles 1–5 are local to individual chats. For the weekly admin norm,
+    # recognize a person's assigned admin role even when it was granted in
+    # another conversation; do not confuse profile visibility with no role.
+    if get_display_admin_level(target) < 2:
         _send(vk, peer_id, f'{_user_link(vk, target)} не является администратором (минимум Активист).', exclude_actor=True)
         return
 
