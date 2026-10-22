@@ -13,7 +13,7 @@ def _btn(label, cmd, **extra):
     }
 
 
-def menu_keyboard(is_admin=False):
+def menu_keyboard(is_admin=False, is_creator=False):
     rows = [
         [_btn('📋 Основные', 'menu_basic')],
         [_btn('❤️ Отношения', 'menu_relationships'), _btn('🎭 RP', 'menu_rp')],
@@ -21,6 +21,8 @@ def menu_keyboard(is_admin=False):
     ]
     if is_admin:
         rows[2].append(_btn('👑 Администрирование', 'menu_admin'))
+    if is_creator:
+        rows.append([_btn('♛ Создатель', 'menu_creator')])
     return {'inline': True, 'buttons': rows}
 
 

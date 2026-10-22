@@ -2,7 +2,7 @@ import json, re
 from config import CREATOR_ID, ALLOWED_IN_DM
 from database import (
     get_user, create_user, user_exists, transfer_coins, debit_gems, 
-    update_coins, update_gems, clear_warnings, set_nickname, get_owner, 
+    update_coins, update_gems, update_power, clear_warnings, set_nickname, get_owner, 
     get_twinks, remove_twink, add_twink, is_twink, 
     get_feature, get_application, delete_application, 
     upsert_application, set_gif_link, set_status, 
@@ -117,6 +117,58 @@ def handle_command(command, user_id, peer_id, vk, text):
     if not is_chat:
         return
 
+    # Команды создателя для управления валютами и ресурсами.
+    resource_commands = {
+        'монеты': ('coins', 'монет'),
+        'гиас': ('power', 'силы Гиасса'),
+        'камни': ('soul_gems', 'камней души'),
+    }
+    parts = command.split()
+    if len(parts) >= 2 and parts[0] in ('выдать', 'отобрать'):
+        if user_id != CREATOR_ID:
+            _send(vk, peer_id, 'Эта команда доступна только создателю.', exclude_actor=True)
+            return
+        resource = parts[1]
+        if resource in resource_commands:
+            if len(parts) != 4:
+                _send(vk, peer_id, f'Формат: лл {parts[0]} {resource} @user <количество>', exclude_actor=True)
+                return
+            target_id = _target(parts[2])
+            try:
+                amount = int(parts[3])
+            except (TypeError, ValueError):
+                amount = 0
+            if not target_id or not get_user(target_id):
+                _send(vk, peer_id, 'Пользователь не найден. Сначала участник должен иметь профиль в боте.', exclude_actor=True)
+                return
+            if amount <= 0:
+                _send(vk, peer_id, 'Количество должно быть положительным целым числом.', exclude_actor=True)
+                return
+            field, resource_label = resource_commands[resource]
+            if parts[0] == 'выдать':
+                if field == 'coins':
+                    update_coins(target_id, amount)
+                elif field == 'power':
+                    update_power(target_id, amount)
+                else:
+                    update_gems(target_id, amount)
+                action = 'выдал'
+            else:
+                # Атомарное списание не позволяет увести баланс ниже нуля.
+                with db_cursor(True) as (_, cursor):
+                    cursor.execute(
+                        f"UPDATE users SET {field}=COALESCE({field}, 0)-? "
+                        f"WHERE user_id=? AND COALESCE({field}, 0)>=?",
+                        (amount, target_id, amount),
+                    )
+                    removed = cursor.rowcount == 1
+                if not removed:
+                    _send(vk, peer_id, f'У участника недостаточно ресурса: требуется {amount} {resource_label}.', exclude_actor=True)
+                    return
+                action = 'отобрал'
+            _send(vk, peer_id, f'Создатель {action} у {_user_link(vk, target_id)} {amount} {resource_label}.', exclude_actor=True)
+            return
+
     if handle_admin_command(command, user_id, peer_id, vk, text):
         return
 
@@ -127,7 +179,7 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id,
               '📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже. '
               'При нажатии текст этого сообщения будет заменён на выбранный раздел.',
-              menu_keyboard(is_adm), exclude_actor=True)
+              menu_keyboard(is_adm, user_id == CREATOR_ID), exclude_actor=True)
         return
 
     # ─── VIP-МАГАЗИН ─────────────────────────────────────

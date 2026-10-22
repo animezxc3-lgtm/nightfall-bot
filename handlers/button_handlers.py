@@ -1,5 +1,6 @@
 import json
 from keyboards import menu_keyboard, back_to_menu_keyboard, get_shop_menu, profession_keyboard, shop_items_keyboard, _btn
+from config import CREATOR_ID
 from admin_commands import get_admin_level
 from database import get_duel_for_opponent, delete_duel
 
@@ -53,6 +54,9 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             )
 
     is_admin = get_admin_level(user_id, peer_id) >= 1
+    is_creator = int(user_id) == int(CREATOR_ID)
+    def menu_kb(admin=None):
+        return menu_keyboard(is_admin if admin is None else admin, is_creator)
 
     # ЗАЯВКИ
     if cmd in ('app_accept', 'app_decline'):
@@ -149,7 +153,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
 
     # МЕНЮ
     if cmd == 'menu_main':
-        edit('📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже.', menu_keyboard(is_admin))
+        edit('📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже.', menu_kb())
         return
 
     if cmd == 'menu_basic':
@@ -169,7 +173,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл продать дом\n'
             'лл продать машину\n'
             'лл продать телефон',
-            menu_keyboard(is_admin),
+            menu_kb(),
         )
         return
 
@@ -187,7 +191,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл удочерить @user\n'
             'лл сдать в детдом @user\n'
             'лл уйти из семьи',
-            menu_keyboard(is_admin),
+            menu_kb(),
         )
         return
 
@@ -211,7 +215,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл подарить @user\n'
             'лл курить [@user]\n'
             'лл пиво [@user]',
-            menu_keyboard(is_admin),
+            menu_kb(),
         )
         return
 
@@ -224,7 +228,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл деп <сумма>\n'
             'лл рулетка <сумма>\n\n'
             '💡 Минимальная ставка: 1 000 🪙',
-            menu_keyboard(is_admin),
+            menu_kb(),
         )
         return
 
@@ -236,7 +240,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл уволиться\n'
             'лл работа [@user]\n\n'
             '💡 Множитель зарплаты можно повысить в VIP-магазине.',
-            menu_keyboard(is_admin),
+            menu_kb(),
         )
         return
 
@@ -250,13 +254,32 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл продать дом\n'
             'лл продать машину\n'
             'лл продать телефон',
-            menu_keyboard(is_admin),
+            menu_kb(),
+        )
+        return
+
+    if cmd == 'menu_creator':
+        if not is_creator:
+            edit('Этот раздел доступен только создателю.', menu_kb())
+            return
+        edit(
+            '♛ КОМАНДЫ СОЗДАТЕЛЯ\n\n'
+            '💰 ВЫДАЧА РЕСУРСОВ:\n'
+            'лл выдать монеты @user <количество>\n'
+            'лл выдать гиас @user <количество>\n'
+            'лл выдать камни @user <количество>\n\n'
+            '➖ ИЗЪЯТИЕ РЕСУРСОВ:\n'
+            'лл отобрать монеты @user <количество>\n'
+            'лл отобрать гиас @user <количество>\n'
+            'лл отобрать камни @user <количество>\n\n'
+            'Указывать можно упоминание, ссылку или ID пользователя. Количество должно быть положительным целым числом.',
+            menu_kb(),
         )
         return
 
     if cmd == 'menu_admin':
         if not is_admin:
-            edit('Этот раздел доступен только администраторам.', menu_keyboard(False))
+            edit('Этот раздел доступен только администраторам.', menu_kb(False))
             return
         edit(
             '👑 АДМИНИСТРАТИВНЫЕ КОМАНДЫ\n\n'
@@ -311,7 +334,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл беседа\n'
             'лл беседы\n'
             'лл админ стат',
-            menu_keyboard(True),
+            menu_kb(True),
         )
         return
 
@@ -334,7 +357,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл работать\n'
             'лл уволиться\n'
             'лл работа [@user]',
-            menu_keyboard(is_admin),
+            menu_kb(),
         )
         return
 
@@ -344,7 +367,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл деп <сумма>\n'
             'лл рулетка <сумма>\n\n'
             '💡 Минимальная ставка: 1 000 🪙',
-            menu_keyboard(is_admin),
+            menu_kb(),
         )
         return
 
@@ -358,7 +381,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             'лл продать дом\n'
             'лл продать машину\n'
             'лл продать телефон',
-            menu_keyboard(is_admin),
+            menu_kb(),
         )
         return
 
@@ -390,7 +413,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         cat = payload.get('category')
         name = payload.get('item')
         ok, msg = buy_property(user_id, cat, name)
-        edit(msg + '\n\n' + category_text(cat), menu_keyboard(is_admin))
+        edit(msg + '\n\n' + category_text(cat), menu_kb())
         return
 
     if cmd in ('relationship_accept', 'relationship_reject'):
