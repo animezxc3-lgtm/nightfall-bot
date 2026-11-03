@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from config import (
     APPLICATIONS_PEER_ID, APPLICATION_COOLDOWN_DAYS,
     APPLICATION_TIMEOUT_MINUTES, APPLICATION_MIN_DELAY_SECONDS,
+    CONTROL_CHAT, MAIN_CHATS
 )
 from database import (
     get_application, upsert_application, delete_application,
@@ -14,14 +15,11 @@ from database import (
     is_in_admin_blacklist, get_global_role,
     db_cursor, set_gif_link, set_status,
 )
-from keyboards import application_review_keyboard
-
+from keyboards import application_review_keyboard, application_chat_select_keyboard, application_role_select_keyboard
 
 QUESTIONS = [
     'Ваше имя и фамилия? (только буквы, 2–80 символов)',
     'Ваш возраст?',
-    'В какой беседе вы хотите стать администратором? (Обычно это число рядом с названием беседы, в которой вы состоите.)',
-    'На какую должность вы претендуете — Рекрутер/Активист? Претендуете ли вы двигаться по карьерной лестнице?',
     'Сколько времени в день вы готовы уделять администрированию и в какие часы вы обычно онлайн?',
     'Почему вы хотите стать администратором?',
     'Был ли у вас уже опыт администрирования? Если да — напишите, как долго были администратором и с какими трудностями сталкивались.',
@@ -31,7 +29,6 @@ QUESTIONS = [
     'Разрешено ли правилами распространение персональных данных?',
 ]
 
-
 _EMOJI_DIGITS = {
     '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
     '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣',
@@ -39,14 +36,10 @@ _EMOJI_DIGITS = {
 
 _DOC_RE = re.compile(r'^https?://vk\.(?:com|ru)/doc-?\d+_\d+')
 
-
 def _num(n):
-    if n == 11:
-        return '1️⃣1️⃣'  # Для 11-го вопроса
-    if n == 10:
-        return '🔟'
+    if n == 11: return '1️⃣1️⃣'
+    if n == 10: return '🔟'
     return ''.join(_EMOJI_DIGITS[d] for d in str(n))
-
 
 def _validate_name(text):
     text = text.strip()
@@ -56,18 +49,15 @@ def _validate_name(text):
         return False, 'Имя и фамилия должны содержать только буквы, пробел или дефис.'
     return True, ''
 
-
 def _validate_default(text):
     if not text or len(text.strip()) < 1:
         return False, 'Ответ не может быть пустым.'
     return True, ''
 
-
 def validate_answer(step, text):
     if step == 0:
         return _validate_name(text)
     return _validate_default(text)
-
 
 def _timeout_expired(app):
     if not app or not app.get('updated_at'):
@@ -78,14 +68,12 @@ def _timeout_expired(app):
         return False
     return datetime.now() - updated > timedelta(minutes=APPLICATION_TIMEOUT_MINUTES)
 
-
 def _vk_name(vk, uid):
     try:
         info = vk.users.get(user_ids=uid)[0]
         return f"{info.get('first_name','')} {info.get('last_name','')}".strip()
     except Exception:
         return 'Пользователь'
-
 
 def start_application(user_id, vk):
     app = get_application(user_id)
@@ -116,82 +104,69 @@ def start_application(user_id, vk):
     if r:
         return 'Ты уже состоишь в администрации одной из бесед.'
 
-    upsert_application(user_id, 'in_progress', 0, [])
+    upsert_application(user_id, 'await_chat', 0, [])
 
-    return (
+    msg = (
         '📋 Заявка на администратора\n\n'
-        'Я задам 11 вопросов. Отвечай на каждый отдельным сообщением. Читай внимательно и отвечай на все поставленные тебе вопросы.\n\n'
+        'Шаг 1: Выбери беседу, в которую ты хочешь подать заявку.\n'
         '❗ Принимается ТОЛЬКО 1 ОТВЕТ НА ПОСТАВЛЕННЫЙ ВОПРОС.\n'
         'Чтобы прервать напиши — лл отмена.\n\n'
-        '━━━━━━━━━━━━━━━\n\n'
-        f'{_num(1)} {QUESTIONS[0]}'
     )
-
+    vk.messages.send(peer_id=user_id, random_id=0, message=msg, keyboard=json.dumps(application_chat_select_keyboard(), ensure_ascii=False), disable_mentions=True)
+    return None # Отправлено вручную
 
 def handle_dm_message(user_id, text, vk):
-    """
-    Обрабатывает сообщения в ЛС бота.
-    Возвращает True, если сообщение обработано.
-    """
     app = get_application(user_id)
 
-    # ─── Ожидание GIF-ссылки ────────────────────────────
+    # ─── Ожидание GIF-ссылки (VIP) ────────────────────────────
     if app and app['state'] == 'await_gif':
         text_clean = (text or '').strip()
         if _DOC_RE.match(text_clean):
             set_gif_link(user_id, text_clean)
             delete_application(user_id)
-            vk.messages.send(
-                peer_id=user_id, random_id=0,
-                message='✅ GIF/видео сохранено в профиле.',
-                disable_mentions=True,
-            )
+            
+            # Отправляем в заявки
+            try:
+                vk.messages.send(
+                    peer_id=APPLICATIONS_PEER_ID, random_id=0,
+                    message=f'💎 Покупка VIP (GIF)\nПользователь: [id{user_id}|{_vk_name(vk, user_id)}]\nСсылка: {text_clean}\nПоставьте гифку в профиль.',
+                    disable_mentions=True
+                )
+            except Exception as e:
+                print(f"Ошибка отправки гиф в заявки: {e}")
+
+            vk.messages.send(peer_id=user_id, random_id=0, message='✅ GIF/видео отправлено в заявки. Администраторы установят его в профиль.', disable_mentions=True)
         else:
-            vk.messages.send(
-                peer_id=user_id, random_id=0,
-                message=(
-                    '❌ Это не похоже на ссылку на документ VK.\n'
-                    'Пример: https://vk.com/doc-240896963_123456789\n\n'
-                    'Пришли ссылку ещё раз или напиши `лл отмена`.'
-                ),
-                disable_mentions=True,
-            )
+            vk.messages.send(peer_id=user_id, random_id=0, message='❌ Это не похоже на ссылку на документ VK.\nПример: https://vk.com/doc-240896963_123456789\n\nПришли ссылку ещё раз или напиши `лл отмена`.', disable_mentions=True)
         return True
 
-    # ─── Ожидание статуса ───────────────────────────────
+    # ─── Ожидание статуса (VIP) ───────────────────────────────
     if app and app['state'] == 'await_status':
-        text_clean = (text or '').strip()[:60]
+        text_clean = (text or '').strip()[:30]
         if text_clean:
             set_status(user_id, text_clean)
             delete_application(user_id)
-            vk.messages.send(
-                peer_id=user_id, random_id=0,
-                message=f'✅ Статус установлен: {text_clean}',
-                disable_mentions=True,
-            )
+            vk.messages.send(peer_id=user_id, random_id=0, message=f'✅ Статус установлен: {text_clean}', disable_mentions=True)
         else:
-            vk.messages.send(
-                peer_id=user_id, random_id=0,
-                message='❌ Статус не может быть пустым. Пришли текст ещё раз.',
-                disable_mentions=True,
-            )
+            vk.messages.send(peer_id=user_id, random_id=0, message='❌ Статус не может быть пустым. Пришли текст ещё раз.', disable_mentions=True)
         return True
 
     # ─── Обычная заявка ─────────────────────────────────
-    if not app or app['state'] != 'in_progress':
+    if not app or app['state'] not in ('in_progress', 'await_chat', 'await_role'):
         return False
 
     if _timeout_expired(app):
         delete_application(user_id)
-        vk.messages.send(
-            peer_id=user_id, random_id=0,
-            message='Твоя заявка была сброшена из-за долгого отсутствия.\nНачни заново: `лл заявка`.',
-            disable_mentions=True,
-        )
+        vk.messages.send(peer_id=user_id, random_id=0, message='Твоя заявка была сброшена из-за долгого отсутствия.\nНачни заново: `лл заявка`.', disable_mentions=True)
         return True
 
     text = (text or '').strip()
     if not text:
+        return True
+
+    # Если сейчас ждем выбора кнопками — текстовые сообщения игнорируем
+    if app['state'] in ('await_chat', 'await_role'):
+        vk.messages.send(peer_id=user_id, random_id=0, message='Пожалуйста, воспользуйся кнопками выше, чтобы выбрать беседу или роль.', disable_mentions=True)
         return True
 
     step = app['current_step']
@@ -199,11 +174,7 @@ def handle_dm_message(user_id, text, vk):
 
     ok, err = validate_answer(step, text)
     if not ok:
-        vk.messages.send(
-            peer_id=user_id, random_id=0,
-            message=f'{err}\n\n{_num(step+1)} {QUESTIONS[step]}',
-            disable_mentions=True,
-        )
+        vk.messages.send(peer_id=user_id, random_id=0, message=f'{err}\n\n{_num(step+1)} {QUESTIONS[step]}', disable_mentions=True)
         return True
 
     answers.append(text)
@@ -214,40 +185,31 @@ def handle_dm_message(user_id, text, vk):
     if step >= len(QUESTIONS):
         upsert_application(user_id, 'sent', step, answers)
         send_to_review(user_id, answers, vk)
-        vk.messages.send(
-            peer_id=user_id, random_id=0,
-            message='Спасибо! Твоя заявка отправлена на рассмотрение.\n\nОтвет придёт в личные сообщения в течение 24 часов.',
-            disable_mentions=True,
-        )
+        vk.messages.send(peer_id=user_id, random_id=0, message='Спасибо! Твоя заявка отправлена на рассмотрение.\n\nОтвет придёт в личные сообщения в течение 24 часов.', disable_mentions=True)
         return True
 
     upsert_application(user_id, 'in_progress', step, answers)
-    vk.messages.send(
-        peer_id=user_id, random_id=0,
-        message=f'Принято.\n\n{_num(step+1)} {QUESTIONS[step]}',
-        disable_mentions=True,
-    )
+    vk.messages.send(peer_id=user_id, random_id=0, message=f'Принято.\n\n{_num(step+1)} {QUESTIONS[step]}', disable_mentions=True)
     return True
-
 
 def cancel_application(user_id, vk):
     app = get_application(user_id)
-    if not app or app['state'] not in ('in_progress', 'await_gif', 'await_status'):
-        vk.messages.send(
-            peer_id=user_id, random_id=0,
-            message='У тебя нет активной заявки или покупки в ожидании.',
-            disable_mentions=True,
-        )
+    if not app or app['state'] not in ('in_progress', 'await_chat', 'await_role', 'await_gif', 'await_status'):
+        vk.messages.send(peer_id=user_id, random_id=0, message='У тебя нет активной заявки или покупки в ожидании.', disable_mentions=True)
         return
     delete_application(user_id)
-    vk.messages.send(
-        peer_id=user_id, random_id=0,
-        message='Отменено. Ты можешь подать новую команду `лл заявка` или купить что-то в VIP-магазине.',
-        disable_mentions=True,
-    )
-
+    vk.messages.send(peer_id=user_id, random_id=0, message='Отменено. Ты можешь подать новую команду `лл заявка` или купить что-то в VIP-магазине.', disable_mentions=True)
 
 def send_to_review(user_id, answers, vk):
+    app = get_application(user_id)
+    chat_name = "Неизвестно"
+    role_name = "Неизвестно"
+    
+    from config import MAIN_CHATS, ANARCHY_CHAT, CASINO_CHAT
+    if app['current_step'] >= 0:
+        # Мы сохраняли выбранные ID в начало answers (или можно вытащить из БД, если настроим)
+        pass
+        
     applicant_name = _vk_name(vk, user_id)
     lines = [
         '📩 Новая заявка на администратора',
@@ -287,7 +249,6 @@ def send_to_review(user_id, answers, vk):
 
     upsert_application(user_id, 'sent', len(QUESTIONS), answers, APPLICATIONS_PEER_ID, cmid)
 
-
 def review_application(applicant_id, reviewer_id, decision, vk, cmid):
     app = get_application(applicant_id)
     if not app or app['state'] != 'sent':
@@ -297,30 +258,16 @@ def review_application(applicant_id, reviewer_id, decision, vk, cmid):
     reviewer_name = _vk_name(vk, reviewer_id)
 
     if decision == 'accept':
-        final = (
-            f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\n'
-            f'Принята администратором [id{reviewer_id}|{reviewer_name}].'
-        )
-        upsert_application(applicant_id, 'accepted', app['current_step'], app['answers'],
-                           app['review_peer_id'], app['review_msg_id'])
+        final = f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\nПринята администратором [id{reviewer_id}|{reviewer_name}].'
+        upsert_application(applicant_id, 'accepted', app['current_step'], app['answers'], app['review_peer_id'], app['review_msg_id'])
     else:
-        final = (
-            f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\n'
-            f'Отклонена администратором [id{reviewer_id}|{reviewer_name}].'
-        )
-        upsert_application(applicant_id, 'declined', app['current_step'], app['answers'],
-                           app['review_peer_id'], app['review_msg_id'])
+        final = f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\nОтклонена администратором [id{reviewer_id}|{reviewer_name}].'
+        upsert_application(applicant_id, 'declined', app['current_step'], app['answers'], app['review_peer_id'], app['review_msg_id'])
         set_application_cooldown(applicant_id, APPLICATION_COOLDOWN_DAYS)
 
     if cmid is not None:
         try:
-            vk.messages.edit(
-                peer_id=APPLICATIONS_PEER_ID,
-                conversation_message_id=cmid,
-                message=final,
-                keyboard=json.dumps({'inline': True, 'buttons': []}, ensure_ascii=False),
-                disable_mentions=True,
-            )
+            vk.messages.edit(peer_id=APPLICATIONS_PEER_ID, conversation_message_id=cmid, message=final, keyboard=json.dumps({'inline': True, 'buttons': []}, ensure_ascii=False), disable_mentions=True)
         except Exception as e:
             print(f'Не удалось отредактировать сообщение заявки: {e}')
 

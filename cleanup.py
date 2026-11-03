@@ -1,16 +1,8 @@
-"""Weekly VK conversation cleanup.
-
-Every Sunday at 21:00 Moscow time, chats with cleanup enabled are checked.
-A member needs at least 50 messages during the finished weekly period to stay.
-"""
-import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from database import get_all_chats, get_chat_user_week_messages
 
-CLEANUP_THRESHOLD = 50
 MOSCOW = ZoneInfo("Europe/Moscow")
-
 
 def previous_week_period(now=None):
     now = now or datetime.now(MOSCOW)
@@ -19,53 +11,31 @@ def previous_week_period(now=None):
     start_date = current_sunday - timedelta(days=6)
     return start_date.isoformat(), end_date.isoformat()
 
-
-def run_cleanup(vk, creator_id, get_admin_level):
+def run_manual_cleanup(vk, peer_id, min_messages, creator_id, get_admin_level):
+    """Запускает чистку в конкретной беседе с заданным порогом (строго меньше)."""
     start_date, end_date = previous_week_period()
+    
+    try:
+        members = vk.messages.getConversationMembers(peer_id=peer_id).get("items", [])
+    except Exception as exc:
+        return f"Ошибка получения участников: {exc}"
 
-    all_chats = get_all_chats()
-    names = {}
-    if all_chats:
-        ids = [p for p, _ in all_chats]
+    checked = kept = removed = 0
+    for member in members:
+        uid = member.get("member_id")
+        if not uid or uid < 0:
+            continue
+        checked += 1
+        if uid == creator_id or get_admin_level(uid, peer_id) >= 1:
+            kept += 1
+            continue
+        count = get_chat_user_week_messages(peer_id, uid, start_date, end_date)
+        if count >= min_messages: # Строго меньше порога - кик
+            kept += 1
+            continue
         try:
-            data = vk.messages.getConversationsById(peer_ids=','.join(map(str, ids))).get('items', [])
-            for x in data:
-                pid = int(x.get('peer', {}).get('id'))
-                names[pid] = (x.get('chat_settings', {}).get('title') or '').strip()
+            vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=uid)
+            removed += 1
         except Exception:
             pass
-
-    results = []
-    for peer_id, enabled in all_chats:
-        if not enabled:
-            continue
-        title = names.get(peer_id, '')
-        if not re.search(r'\d+\s*$', title):
-            continue
-
-        try:
-            members = vk.messages.getConversationMembers(peer_id=peer_id).get("items", [])
-        except Exception as exc:
-            results.append((peer_id, 0, 0, f"Ошибка получения участников: {exc}"))
-            continue
-
-        checked = kept = removed = 0
-        for member in members:
-            uid = member.get("member_id")
-            if not uid or uid < 0:
-                continue
-            checked += 1
-            if uid == creator_id or get_admin_level(uid, peer_id) >= 1:
-                kept += 1
-                continue
-            count = get_chat_user_week_messages(peer_id, uid, start_date, end_date)
-            if count >= CLEANUP_THRESHOLD:
-                kept += 1
-                continue
-            try:
-                vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=uid)
-                removed += 1
-            except Exception:
-                pass
-        results.append((peer_id, checked, kept, removed))
-    return results
+    return f"Чистка завершена. Проверено: {checked}, Оставлено: {kept}, Кикнуто: {removed}."

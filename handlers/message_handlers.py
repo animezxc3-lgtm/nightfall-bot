@@ -1,5 +1,6 @@
 import json, re
-from config import CREATOR_ID, ALLOWED_IN_DM
+from datetime import datetime
+from config import CREATOR_ID, ALLOWED_IN_DM, MAIN_CHATS, ANARCHY_CHAT, CASINO_CHAT
 from database import (
     get_user, create_user, user_exists, transfer_coins, debit_gems, 
     update_coins, update_gems, update_power, clear_warnings, set_nickname, get_owner, 
@@ -15,13 +16,7 @@ from games import casino
 from wheel import spin_wheel, draw_wheel
 from vk_upload import upload_photo
 from jobs.work_handler import work, hire, fire, job_stats
-from handlers.user_handlers import (
-    get_profile,
-    get_profile_data,
-    get_balance,
-    get_activity,
-    is_admin,
-)
+from handlers.user_handlers import get_profile, get_profile_data, get_balance, get_activity, is_admin
 from handlers.rp_handlers import handle_rp_command
 from relationships import (
     parse_target_id, start_relationship, end_relationship, divorce,
@@ -34,7 +29,6 @@ from jobs.professions import PROFESSIONS
 from tasks import (format_tasks, format_assigned_task, event as task_event, notify_task_rewards,
                    get_extra_task_slots, buy_extra_task_slot)
 
-
 def _user_link(vk, user_id, fallback='Пользователь'):
     try:
         info = vk.users.get(user_ids=user_id)[0]
@@ -43,7 +37,6 @@ def _user_link(vk, user_id, fallback='Пользователь'):
         label = get_display_name_safe(user_id, fallback)
     return f'[id{user_id}|{label}]'
 
-
 def _send(vk, peer_id, msg, keyboard=None, attachment=None, exclude_actor=False):
     actor = get_user_id()
     if actor and not exclude_actor and not get_exclude_actor():
@@ -51,12 +44,9 @@ def _send(vk, peer_id, msg, keyboard=None, attachment=None, exclude_actor=False)
     args = {'peer_id': peer_id, 'random_id': 0, 'message': msg}
     if keyboard is not None:
         args['keyboard'] = json.dumps(keyboard, ensure_ascii=False)
-    if attachment:
-        args['attachment'] = attachment
+    if attachment: args['attachment'] = attachment
     args['disable_mentions'] = True
     vk.messages.send(**args)
-
-
 
 def _record_task_event(vk, peer_id, user_id, kind, amount=1, data=None):
     try:
@@ -65,26 +55,16 @@ def _record_task_event(vk, peer_id, user_id, kind, amount=1, data=None):
     except Exception as e:
         print(f'⚠️ Ошибка обновления задания ({kind}, user={user_id}): {e}')
 
-
 def _target(s): return parse_target_id(s)
 
-
 def get_display_name_safe(uid, fallback):
-    from relationships import get_display_name
     return get_display_name(uid) or fallback
 
-
-# ============ VIP МАГАЗИН ============
+# ============ VIP МАГАЗИН (ТОЛЬКО ЛС) ============
 
 VIP_PRICES = {
-    1: 100,  # GIF/видео в профиль
-    2: 100,  # Статус
-    3: 65,   # Снять предупреждение
-    4: 100,  # Множитель зарплаты
-    5: 100,  # Второй слот заданий навсегда
-    6: 100,  # Третий слот заданий навсегда
+    1: 100, 2: 100, 3: 65, 4: 100, 5: 100, 6: 100,
 }
-
 
 def vip_shop_text():
     return (
@@ -95,76 +75,46 @@ def vip_shop_text():
         '4. Повысить множитель зарплаты — 100 💎\n'
         '5. Второй слот ежедневных заданий навсегда — 100 💎\n'
         '6. Третий слот ежедневных заданий навсегда — 100 💎\n\n'
-        'Покупка: `лл купить <номер>`'
+        'Покупка: `лл вип <номер>` (только в ЛС бота)'
     )
 
-
 def _check_salary_mult_cap(user_id):
-    """Максимум множителя — x7."""
     return get_salary_multiplier(user_id) >= 7.0
-
 
 def handle_command(command, user_id, peer_id, vk, text):
     raw_command = command.strip()
     if text and text.lower().startswith('лл '):
         raw_command = text[3:].strip()
     command = raw_command.lower()
-    if not command:
-        return
+    if not command: return
+    
     list_commands = {'меню', 'магазин', 'беседы', 'админы', 'банстат', 'твинки', 'задание', 'задания'}
     set_user(user_id, command.split()[0] in list_commands)
     is_chat = peer_id > 2000000000
-    if not is_chat:
-        return
+    if not is_chat: return
 
-    # Команды создателя для управления валютами и ресурсами.
-    resource_commands = {
-        'монеты': ('coins', 'монет'),
-        'гиас': ('power', 'силы Гиасса'),
-        'камни': ('soul_gems', 'камней души'),
-    }
+    # Команды создателя
+    resource_commands = {'монеты': ('coins', 'монет'), 'гиас': ('power', 'силы Гиаса'), 'камни': ('soul_gems', 'камней души')}
     parts = command.split()
     if len(parts) >= 2 and parts[0] in ('выдать', 'отобрать'):
-        if user_id != CREATOR_ID:
-            _send(vk, peer_id, 'Эта команда доступна только создателю.', exclude_actor=True)
-            return
+        if user_id != CREATOR_ID: return
         resource = parts[1]
         if resource in resource_commands:
-            if len(parts) != 4:
-                _send(vk, peer_id, f'Формат: лл {parts[0]} {resource} @user <количество>', exclude_actor=True)
-                return
+            if len(parts) != 4: return
             target_id = _target(parts[2])
-            try:
-                amount = int(parts[3])
-            except (TypeError, ValueError):
-                amount = 0
-            if not target_id or not get_user(target_id):
-                _send(vk, peer_id, 'Пользователь не найден. Сначала участник должен иметь профиль в боте.', exclude_actor=True)
-                return
-            if amount <= 0:
-                _send(vk, peer_id, 'Количество должно быть положительным целым числом.', exclude_actor=True)
-                return
+            try: amount = int(parts[3])
+            except (TypeError, ValueError): amount = 0
+            if not target_id or not get_user(target_id) or amount <= 0: return
             field, resource_label = resource_commands[resource]
             if parts[0] == 'выдать':
-                if field == 'coins':
-                    update_coins(target_id, amount)
-                elif field == 'power':
-                    update_power(target_id, amount)
-                else:
-                    update_gems(target_id, amount)
+                if field == 'coins': update_coins(target_id, amount)
+                elif field == 'power': update_power(target_id, amount)
+                else: update_gems(target_id, amount)
                 action = 'выдал'
             else:
-                # Атомарное списание не позволяет увести баланс ниже нуля.
                 with db_cursor(True) as (_, cursor):
-                    cursor.execute(
-                        f"UPDATE users SET {field}=COALESCE({field}, 0)-? "
-                        f"WHERE user_id=? AND COALESCE({field}, 0)>=?",
-                        (amount, target_id, amount),
-                    )
-                    removed = cursor.rowcount == 1
-                if not removed:
-                    _send(vk, peer_id, f'У участника недостаточно ресурса: требуется {amount} {resource_label}.', exclude_actor=True)
-                    return
+                    cursor.execute(f"UPDATE users SET {field}=COALESCE({field}, 0)-? WHERE user_id=? AND COALESCE({field}, 0)>=?", (amount, target_id, amount))
+                    if cursor.rowcount != 1: return
                 action = 'отобрал'
             _send(vk, peer_id, f'Создатель {action} у {_user_link(vk, target_id)} {amount} {resource_label}.', exclude_actor=True)
             return
@@ -176,82 +126,19 @@ def handle_command(command, user_id, peer_id, vk, text):
     if command == 'меню':
         from keyboards import menu_keyboard
         is_adm = get_admin_level(user_id, peer_id) >= 1
-        _send(vk, peer_id,
-              '📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже. '
-              'При нажатии текст этого сообщения будет заменён на выбранный раздел.',
-              menu_keyboard(is_adm, user_id == CREATOR_ID), exclude_actor=True)
+        _send(vk, peer_id, '📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже.', menu_keyboard(is_adm, user_id == CREATOR_ID), exclude_actor=True)
         return
 
-    # ─── VIP-МАГАЗИН ─────────────────────────────────────
-    if command == 'вип магазин':
-        _send(vk, peer_id, vip_shop_text(), exclude_actor=True)
-        return
-
-    if command.startswith('купить '):
-        parts = command.split()
-        if len(parts) != 2:
-            return
-        try:
-            n = int(parts[1])
-        except ValueError:
-            return
-        price = VIP_PRICES.get(n)
-        if not price:
-            return
-
-        if n == 4 and _check_salary_mult_cap(user_id):
-            _send(vk, peer_id, 'Множитель уже максимальный (×7).', exclude_actor=True)
-            return
-        if n in (5, 6):
-            owned_slots = get_extra_task_slots(user_id)
-            wanted = n - 4  # item 5 opens slot 2 (one extra); item 6 opens slot 3
-            if owned_slots >= wanted:
-                _send(vk, peer_id, 'Этот слот уже открыт.', exclude_actor=True)
-                return
-            if wanted != owned_slots + 1:
-                _send(vk, peer_id, 'Сначала открой предыдущий слот.', exclude_actor=True)
-                return
-
-        if not debit_gems(user_id, price):
-            _send(vk, peer_id, 'Недостаточно Камней души.', exclude_actor=True)
-            return
-
-        if n == 1:
-            _send(vk, peer_id,
-                  'GIF/видео в профиль куплено. Пришли ссылку на документ VK '
-                  '(в формате https://vk.com/doc-XXXX_YYYY) следующим сообщением.',
-                  exclude_actor=True)
-            upsert_application(user_id, 'await_gif', 0, [])
-            return
-        if n == 2:
-            _send(vk, peer_id,
-                  'Статус куплен. Напиши текст статуса следующим сообщением (до 60 символов).',
-                  exclude_actor=True)
-            upsert_application(user_id, 'await_status', 0, [])
-            return
-        if n == 3:
-            clear_warnings(user_id, peer_id)
-            _send(vk, peer_id, 'Предупреждение снято.', exclude_actor=True)
-            return
-        if n == 4:
-            new_mult = increase_salary_multiplier(user_id, 0.5, 7.0)
-            _send(vk, peer_id, f'Множитель зарплаты повышен. Теперь ×{new_mult}.', exclude_actor=True)
-            return
-        if n in (5, 6):
-            ok, message = buy_extra_task_slot(user_id, n - 3)
-            if not ok:
-                update_gems(user_id, price)
-            _send(vk, peer_id, message, exclude_actor=True)
-            return
+    # VIP-магазин В БЕСЕДЕ ЗАПРЕЩЕН
+    if command == 'вип магазин' or command.startswith('купить ') or command.startswith('вип '):
+        _send(vk, peer_id, 'VIP-магазин доступен только в личных сообщениях бота!', exclude_actor=True)
         return
 
     # ─── ПРОФИЛЬ ────────────────────────────────────────
     if command == 'профиль' or command.startswith('профиль '):
         rest = command[len('профиль'):].strip() if command != 'профиль' else ''
         target = _target(rest) if rest else user_id
-        if not target or not get_user(target):
-            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
-            return
+        if not target or not get_user(target): return
         profile_text, profile_attachment = get_profile_data(target, peer_id)
         _send(vk, peer_id, profile_text, attachment=profile_attachment, exclude_actor=True)
         _record_task_event(vk, peer_id, user_id, 'profile' if target == user_id else 'other_profile')
@@ -260,44 +147,33 @@ def handle_command(command, user_id, peer_id, vk, text):
     if command == 'баланс' or command.startswith('баланс '):
         rest = command[len('баланс'):].strip() if command != 'баланс' else ''
         target = _target(rest) if rest else user_id
-        if not target or not get_user(target):
-            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
-            return
-        _send(vk, peer_id, get_balance(target, vk), exclude_actor=True)
-        if target == user_id:
-            _record_task_event(vk, peer_id, user_id, 'balance')
+        if not target or not get_user(target): return
+        # Новый текст
+        msg = f'Баланс {_user_link(vk, target)}:\n' + get_balance(target, vk).split('\n', 1)[1]
+        _send(vk, peer_id, msg, exclude_actor=True)
+        if target == user_id: _record_task_event(vk, peer_id, user_id, 'balance')
         return
 
-    if command == 'задание':
-        _send(vk, peer_id, format_assigned_task(user_id, peer_id), exclude_actor=True)
-        return
-
-    if command == 'задания':
-        _send(vk, peer_id, format_tasks(user_id, peer_id), exclude_actor=True)
-        return
+    if command == 'задание': _send(vk, peer_id, format_assigned_task(user_id, peer_id), exclude_actor=True); return
+    if command == 'задания': _send(vk, peer_id, format_tasks(user_id, peer_id), exclude_actor=True); return
 
     if command.startswith('ник '):
         nick = raw_command[4:].strip()
-        if not 1 <= len(nick) <= 30:
-            _send(vk, peer_id, 'Ник должен быть от 1 до 30 символов.', exclude_actor=True)
-            return
+        if not 1 <= len(nick) <= 30: return
         set_nickname(user_id, nick)
-        link = f'[id{user_id}|{nick}]'
-        _send(vk, peer_id, f'Ваш новый никнейм: {link}', exclude_actor=True)
+        _send(vk, peer_id, f'Ваш новый никнейм: [id{user_id}|{nick}]', exclude_actor=True)
         return
 
     if command == 'активность' or command.startswith('активность '):
         rest = command[len('активность'):].strip() if command != 'активность' else ''
         target = _target(rest) if rest else user_id
-        if not target or not get_user(target):
-            _send(vk, peer_id, 'Пользователь не найден.')
-            return
-        _send(vk, peer_id, get_activity(target))
-        if target == user_id:
-            _record_task_event(vk, peer_id, user_id, 'activity')
+        if not target or not get_user(target): return
+        # Новый текст
+        msg = f'Статистика сообщений {_user_link(vk, target)}:\n' + get_activity(target).split('\n', 1)[1]
+        _send(vk, peer_id, msg)
+        if target == user_id: _record_task_event(vk, peer_id, user_id, 'activity')
         return
 
-    # ─── ЛЛ НОРМА ────────────────────────────────────────
     if command == 'норма' or command.startswith('норма '):
         handle_norma(command, user_id, peer_id, vk)
         return
@@ -306,65 +182,29 @@ def handle_command(command, user_id, peer_id, vk, text):
     if command == 'твинк' or command.startswith('твинк '):
         parts = command.split(maxsplit=2)
         if len(parts) >= 2 and parts[1] == 'убрать':
-            if len(parts) < 3:
-                return
+            if len(parts) < 3: return
             target = _target(parts[2])
-            if not target:
-                return
-            if not is_twink(target):
-                return
+            if not target or not is_twink(target): return
             owner = get_owner(target)
-            actor_level = __import__('admin_commands').get_admin_level(user_id, peer_id)
-            if user_id != owner and actor_level < 5:
-                return
-            remove_twink(target)
-            return
-
-        if len(parts) < 2:
-            return
+            actor_level = get_admin_level(user_id, peer_id)
+            if user_id != owner and actor_level < 5: return
+            remove_twink(target); return
+        if len(parts) < 2: return
         twink_id = _target(parts[1])
-        if not twink_id:
-            return
-        if twink_id == user_id:
-            return
-        if not get_user(twink_id):
-            try:
-                info = vk.users.get(user_ids=twink_id)[0]
-                name = f"{info.get('first_name','')} {info.get('last_name','')}".strip() or 'Пользователь'
-                create_user(twink_id, name)
-            except Exception as e:
-                print(f'⚠️ Не удалось создать профиль твинка: {e}')
-        if is_twink(twink_id):
-            return
-        add_twink(user_id, twink_id)
-        return
+        if not twink_id or twink_id == user_id or not get_user(twink_id): return
+        if is_twink(twink_id): return
+        add_twink(user_id, twink_id); return
 
     if command == 'твинки' or command.startswith('твинки '):
         parts = command.split(maxsplit=1)
-        if len(parts) == 1:
-            target = user_id
-        else:
-            t = _target(parts[1])
-            if not t:
-                return
-            target = t
+        target = user_id if len(parts) == 1 else _target(parts[1])
+        if not target: return
         owner = get_owner(target) or target
         twinks = get_twinks(owner)
         header = f'👥 Твинки {_user_link(vk, owner)}:'
-        if not twinks:
-            _send(vk, peer_id, header + '\n-нет', exclude_actor=True)
-            return
-        lines = [header]
-        for tid in twinks:
-            name = ''
-            try:
-                info = vk.users.get(user_ids=tid)[0]
-                name = f"{info.get('first_name','')} {info.get('last_name','')}".strip() or 'Пользователь'
-            except Exception:
-                name = 'Пользователь'
-            lines.append(f'- [id{tid}|{name}]')
-        _send(vk, peer_id, '\n'.join(lines), exclude_actor=True)
-        return
+        if not twinks: _send(vk, peer_id, header + '\n-нет', exclude_actor=True); return
+        lines = [header] + [f'- [id{tid}|Пользователь]' for tid in twinks]
+        _send(vk, peer_id, '\n'.join(lines), exclude_actor=True); return
 
     # ─── ЗАЯВКА ─────────────────────────────────────────
     if command == 'заявка':
@@ -373,163 +213,107 @@ def handle_command(command, user_id, peer_id, vk, text):
 
     # ─── ЗАКРЕПЫ ────────────────────────────────────────
     if command == 'установить закреп':
-        if get_admin_level(user_id, peer_id) < 4:
-            _send(vk, peer_id, 'Недостаточно прав', exclude_actor=True)
-            return
+        if get_admin_level(user_id, peer_id) < 4: return
         from pin_manager import update_pin_in_chat
-        update_pin_in_chat(vk, peer_id, notify=True)
-        return
+        update_pin_in_chat(vk, peer_id, notify=True); return
 
     if command == 'обновить закрепы':
-        if user_id != CREATOR_ID:
-            if get_admin_level(user_id, peer_id) < 7:
-                _send(vk, peer_id, 'Недостаточно прав', exclude_actor=True)
-                return
+        if user_id != CREATOR_ID and get_admin_level(user_id, peer_id) < 7: return
         from pin_manager import update_all_pins
         results = update_all_pins(vk)
         ok = len([r for r in results if r[1] in ('updated', 'created', 'recreated')])
-        _send(vk, peer_id, f'Обновлено бесед: {ok} из {len(results)}.', exclude_actor=True)
-        return
+        _send(vk, peer_id, f'Обновлено бесед: {ok} из {len(results)}.', exclude_actor=True); return
 
     # ─── ДУЭЛЬ ──────────────────────────────────────────
     if command.startswith('дуэль'):
-        if not get_feature(peer_id, 'дуэль'):
-            _send(vk, peer_id, 'Дуэли в этой беседе запрещены', exclude_actor=True)
+        # Дуэли 24/7 только в Анархии. В остальных - только в выходные.
+        is_weekend = datetime.now().weekday() >= 5
+        if peer_id != ANARCHY_CHAT and not is_weekend:
+            _send(vk, peer_id, 'Дуэли в этой беседе проводятся только в субботу и воскресенье.', exclude_actor=True)
             return
+        if not get_feature(peer_id, 'дуэль') and peer_id in MAIN_CHATS:
+            _send(vk, peer_id, 'Дуэли в этой беседе отключены.', exclude_actor=True)
+            return
+            
         parts = command.split(maxsplit=1)
         if len(parts) < 2:
+            _send(vk, peer_id, 'Укажи, кого вызываешь: `лл дуэль @user`', exclude_actor=True)
             return
         opponent = parse_target_id(parts[1])
-        if not opponent:
-            return
-        if opponent == user_id:
-            return
-        if not get_user(opponent):
-            return
+        if not opponent or opponent == user_id or not get_user(opponent): return
         if has_active_duel(user_id) or has_active_duel(opponent):
-            _send(vk, peer_id, 'У одного из участников уже активна дуэль.', exclude_actor=True)
-            return
+            _send(vk, peer_id, 'У одного из участников уже активна дуэль.', exclude_actor=True); return
 
-        text_msg = (
-            f'⚔️ {_user_link(vk, user_id)} вызвал на дуэль {_user_link(vk, opponent)}!\n\n'
-            f'Ставка: 15% от Силы Гиаса проигравшего.'
-        )
+        text_msg = f'⚔️ {_user_link(vk, user_id)} вызвал на дуэль {_user_link(vk, opponent)}!\n\nСтавка: 15% от Силы Гиаса проигравшего.'
         from keyboards import duel_keyboard
-        vk.messages.send(
-            peer_id=peer_id,
-            random_id=0,
-            message=text_msg,
-            keyboard=json.dumps(duel_keyboard(), ensure_ascii=False),
-            disable_mentions=True,
-        )
-        create_duel(user_id, opponent, peer_id, None)
+        res = vk.messages.send(peer_id=peer_id, random_id=0, message=text_msg, keyboard=json.dumps(duel_keyboard(), ensure_ascii=False), disable_mentions=True)
+        cmid = None
+        try:
+            if isinstance(res, int):
+                info = vk.messages.getById(message_ids=res)
+                items = info.get('items') or []
+                if items: cmid = items[0].get('conversation_message_id')
+        except: pass
+        create_duel(user_id, opponent, peer_id, cmid)
         return
 
-    # ─── РУЛЕТКА ────────────────────────────────────────
-    if command.startswith('рулетка'):
-        if not get_feature(peer_id, 'казино'):
+    # ─── РУЛЕТКА / КАЗИНО ───────────────────────────────
+    if command.startswith('рулетка') or command.startswith('деп'):
+        if peer_id not in (CASINO_CHAT,) and not get_feature(peer_id, 'казино'):
             _send(vk, peer_id, 'Казино в этой беседе запрещено.', exclude_actor=True)
             return
+        
         parts = command.split()
-        if len(parts) != 2:
-            return
-        try:
-            bet = int(parts[1])
-        except ValueError:
-            return
-        if bet < 1000:
-            _send(vk, peer_id, 'Минимальная ставка: 1 000 монет.', exclude_actor=True)
-            return
-        user = get_user(user_id)
-        if not user:
-            return
-        # 5 — coins
-        if bet > user[5]:
-            _send(vk, peer_id, 'Недостаточно монет.', exclude_actor=True)
+        if len(parts) != 2: return
+        try: bet = int(parts[1])
+        except ValueError: return
+
+        if command.startswith('деп'):
+            if bet <= 0: return
+            result, mult, err = casino(user_id, bet)
+            if err: _send(vk, peer_id, err, exclude_actor=True); return
+            if mult == 0: _send(vk, peer_id, 'проиграл всю ставку')
+            else: _send(vk, peer_id, f'получил модификатор х{mult}.\nВыигрыш составляет: {result:,}')
+            _record_task_event(vk, peer_id, user_id, 'casino')
             return
 
-        idx, number, color = spin_wheel()
-        color_ru = {'red': 'Красное', 'black': 'Чёрное', 'green': 'Зелёное'}[color]
-        if color == 'black':
-            mult = 0
-        elif color == 'red':
-            mult = 2
-        else:
-            mult = 5
-        win_amount = bet * mult
-        update_coins(user_id, win_amount - bet)
-        try:
-            photo_path = draw_wheel(idx)
-            attachment = upload_photo(vk, photo_path, peer_id)
-        except Exception as e:
-            print(f'⚠️ Не удалось сгенерировать/загрузить колесо: {e}')
-            attachment = None
+        if command.startswith('рулетка'):
+            if bet < 1000:
+                _send(vk, peer_id, 'Минимальная ставка: 1 000 монет.', exclude_actor=True); return
+            user = get_user(user_id)
+            if bet > user[5]:
+                _send(vk, peer_id, 'Недостаточно монет.', exclude_actor=True); return
 
-        text_roulette = (
-            f'{_user_link(vk, user_id)}\n'
-            f'Выпало: {number} — {color_ru}\n'
-            f'Множитель: х{mult}\n'
-            f'Выигрыш: {win_amount:,}'
-        )
-        if attachment:
+            idx, number, color = spin_wheel()
+            color_ru = {'red': 'Красное', 'black': 'Чёрное', 'green': 'Зелёное'}[color]
+            mult = 0 if color == 'black' else (2 if color == 'red' else 5)
+            win_amount = bet * mult
+            update_coins(user_id, win_amount - bet)
+            try:
+                photo_path = draw_wheel(idx)
+                attachment = upload_photo(vk, photo_path, peer_id)
+            except Exception as e:
+                print(f'⚠️ {e}'); attachment = None
+            text_roulette = f'{_user_link(vk, user_id)}\nВыпало: {number} — {color_ru}\nМножитель: х{mult}\nВыигрыш: {win_amount:,}'
             _send(vk, peer_id, text_roulette, attachment=attachment, exclude_actor=True)
-        else:
-            _send(vk, peer_id, text_roulette, exclude_actor=True)
-        _record_task_event(vk, peer_id, user_id, 'casino')
-        return
-
-    # ─── КАЗИНО ─────────────────────────────────────────
-    if command.startswith('деп'):
-        if not get_feature(peer_id, 'казино'):
-            _send(vk, peer_id, 'Казино в этой беседе запрещено.', exclude_actor=True)
+            _record_task_event(vk, peer_id, user_id, 'casino')
             return
-        parts = command.split()
-        if len(parts) != 2:
-            return
-        try:
-            bet = int(parts[1])
-        except ValueError:
-            return
-        if bet <= 0:
-            return
-        result, mult, err = casino(user_id, bet)
-        if err:
-            _send(vk, peer_id, err, exclude_actor=True)
-            return
-        if result is None:
-            return
-        if mult == 0:
-            _send(vk, peer_id, 'проиграл всю ставку')
-        else:
-            _send(vk, peer_id, f'получил модификатор х{mult}.\nВыигрыш составляет: {result:,}')
-        _record_task_event(vk, peer_id, user_id, 'casino')
-        return
 
     # ─── ПЕРЕВОД МОНЕТ ──────────────────────────────────
     if command == 'передать' or command.startswith('передать '):
         remainder = raw_command[len('передать'):].strip()
         target = _target(remainder)
-        if not target:
-            _send(vk, peer_id, 'Формат: `лл передать @user <сумма>`', exclude_actor=True)
-            return
+        if not target: return
         amount_text = re.sub(r'\[id\d+\|[^\]]+\]', ' ', remainder)
         amount_text = re.sub(r'https?://vk\.(?:com|ru)/id\d+', ' ', amount_text, flags=re.I)
         amount_text = re.sub(r'@id\d+', ' ', amount_text, flags=re.I)
         amount_text = re.sub(rf'\b{target}\b', ' ', amount_text)
         amount_match = re.search(r'(?<!\w)\d+(?!\w)', amount_text)
-        try:
-            amount = int(amount_match.group(0)) if amount_match else 0
-        except ValueError:
-            amount = 0
-        if amount <= 0 or target == user_id:
-            _send(vk, peer_id, 'Укажи другого пользователя и положительную сумму.', exclude_actor=True)
-            return
-        if not get_user(target):
-            _send(vk, peer_id, 'У пользователя нет профиля.', exclude_actor=True)
-            return
+        try: amount = int(amount_match.group(0)) if amount_match else 0
+        except ValueError: amount = 0
+        if amount <= 0 or target == user_id or not get_user(target): return
         if not transfer_coins(user_id, target, amount):
-            _send(vk, peer_id, 'У вас недостаточно монет.', exclude_actor=True)
-            return
+            _send(vk, peer_id, 'У вас недостаточно монет.', exclude_actor=True); return
         _send(vk, peer_id, f'Передано {amount:,} 🪙 пользователю {_user_link(vk, target)}.')
         _record_task_event(vk, peer_id, user_id, 'transfer', amount=1, data={'transfer_amount': amount})
         return
@@ -538,24 +322,13 @@ def handle_command(command, user_id, peer_id, vk, text):
     if command == 'работа' or command.startswith('работа '):
         rest = command[len('работа'):].strip() if command != 'работа' else ''
         target = _target(rest) if rest else user_id
-        if not target or not get_user(target):
-            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
-            return
+        if not target or not get_user(target): return
         stats = job_stats(target, viewer_id=user_id)
-        if stats is None:
-            _send(vk, peer_id, f'У {_user_link(vk, target)} нет работы.', exclude_actor=True)
-            return
-        if isinstance(stats, str):
-            _send(vk, peer_id, stats, exclude_actor=True)
-            return
-        mult = stats['multiplier']
+        if stats is None: return
+        if isinstance(stats, str): _send(vk, peer_id, stats, exclude_actor=True); return
         text_work = (
-            f'Статистика работы {_user_link(vk, target)}\n'
-            f'Работа: {stats["job_name"]}\n'
-            f'Должность: {stats["level_name"]}\n'
-            f'Зарплата: {stats["salary"]:,} 🪙 (×{mult})\n'
-            f'⚡ Сила Гиаса: +{stats["power_per_work"]}\n'
-            f'Отработано дней: {stats["days"]}'
+            f'Статистика работы {_user_link(vk, target)}\nРабота: {stats["job_name"]}\nДолжность: {stats["level_name"]}\n'
+            f'Зарплата: {stats["salary"]:,} 🪙 (×{stats["multiplier"]})\n⚡ Сила Гиаса: +{stats["power_per_work"]}\nОтработано дней: {stats["days"]}'
         )
         _send(vk, peer_id, text_work, exclude_actor=True)
         return
@@ -564,138 +337,81 @@ def handle_command(command, user_id, peer_id, vk, text):
     if command == 'семья' or command.startswith('семья '):
         rest = command[len('семья'):].strip() if command != 'семья' else ''
         target = _target(rest) if rest else user_id
-        if not target or not get_user(target):
-            _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
-            return
+        if not target or not get_user(target): return
         stats = get_family_stats(target)
-
-        def _fmt_users(ids):
-            if not ids:
-                return 'Нет'
-            return ', '.join(_user_link(vk, uid) for uid in ids)
-
-        partner_line = _user_link(vk, stats['partner']) if stats['partner'] else 'Нет'
-        days_line = str(stats['days']) if stats['days'] is not None else '—'
-
+        def _fmt(ids): return 'Нет' if not ids else ', '.join(_user_link(vk, u) for u in ids)
         text_family = (
-            f'Статистика семьи {_user_link(vk, target)}\n'
-            f'Партнёр: {partner_line}\n'
-            f'Дней в отношениях: {days_line}\n'
-            f'Дети: {_fmt_users(stats["children"])}\n'
-            f'Родители: {_fmt_users(stats["parents"])}'
+            f'Статистика семьи {_user_link(vk, target)}\nПартнёр: {_user_link(vk, stats["partner"]) if stats["partner"] else "Нет"}\n'
+            f'Дней в отношениях: {stats["days"] if stats["days"] is not None else "—"}\nДети: {_fmt(stats["children"])}\nРодители: {_fmt(stats["parents"])}'
         )
         _send(vk, peer_id, text_family, exclude_actor=True)
         return
 
-# ─── ОТНОШЕНИЯ ──────────────────────────────────────
+    # ─── ОТНОШЕНИЯ ──────────────────────────────────────
     if command.startswith('начать отношения '):
         target = _target(command[len('начать отношения '):])
-        if not target:
-            _send(vk, peer_id, 'Укажи пользователя (тег или ссылку).')
-            return
-        if target == user_id:
-            _send(vk, peer_id, 'Нельзя начать отношения с самим собой.')
-            return
+        if not target or target == user_id: return
         result = start_relationship(user_id, target, vk)
-        if isinstance(result, tuple):
-            ok, msg = result
-        else:
-            ok, msg = True, str(result)
+        if isinstance(result, tuple): ok, msg = result
+        else: ok, msg = True, str(result)
         if ok:
             from keyboards import relationship_proposal_keyboard
             _send(vk, peer_id, msg, relationship_proposal_keyboard())
-        else:
-            _send(vk, peer_id, msg)
+        else: _send(vk, peer_id, msg)
         return
 
     if command.startswith('создать брак '):
         raw_remainder = raw_command[len('создать брак '):].strip()
         target = _target(raw_remainder)
-        if not target:
-            _send(vk, peer_id, 'Формат: `лл создать брак @user <фамилия>`')
-            return
+        if not target: return
         surname = re.sub(r'\[id\d+\|[^\]]+\]', ' ', raw_remainder)
         surname = re.sub(r'https?://vk\.(?:com|ru)/id\d+', ' ', surname, flags=re.I)
         surname = re.sub(r'@id\d+', ' ', surname, flags=re.I)
         surname = re.sub(rf'\b{target}\b', ' ', surname)
         surname = ' '.join(surname.split())
-        if not surname or len(surname) > 30:
-            _send(vk, peer_id, 'Укажи фамилию длиной от 1 до 30 символов.')
-            return
-        if target == user_id:
-            _send(vk, peer_id, 'Нельзя заключить брак с самим собой.')
-            return
+        if not surname or len(surname) > 30 or target == user_id: return
         result = propose_marriage(user_id, target, surname)
-        if isinstance(result, tuple):
-            ok, msg = result
-        else:
-            ok, msg = True, str(result)
+        if isinstance(result, tuple): ok, msg = result
+        else: ok, msg = True, str(result)
         if ok:
             from keyboards import marriage_proposal_keyboard
             _send(vk, peer_id, msg, marriage_proposal_keyboard())
-        else:
-            _send(vk, peer_id, msg)
+        else: _send(vk, peer_id, msg)
         return
 
-    if command == 'расстаться':
-        _send(vk, peer_id, end_relationship(user_id))
-        return
+    if command == 'расстаться': _send(vk, peer_id, end_relationship(user_id)); return
 
-    if command == 'поцеловаться':
-        import random
+    if command == 'поцеловаться' or command == 'обняться':
         partner = get_partner_id(user_id)
-        if not partner:
-            return
-        from handlers.rp_handlers import RP_RESPONSES
-        from relationships import get_display_name as _gdn
-        other = f'[id{partner}|{_gdn(partner) or "партнёр"}]'
-        _send(vk, peer_id, random.choice(RP_RESPONSES['поцеловать']).format(target=other))
-        return
-
-    if command == 'обняться':
-        partner = get_partner_id(user_id)
-        if not partner:
-            return
+        if not partner: return
         from handlers.rp_handlers import RP_RESPONSES
         import random
-        from relationships import get_display_name as _gdn
-        other = f'[id{partner}|{_gdn(partner) or "партнёр"}]'
-        _send(vk, peer_id, random.choice(RP_RESPONSES['обнять']).format(target=other))
+        action = 'поцеловать' if command == 'поцеловаться' else 'обнять'
+        other = f'[id{partner}|{get_display_name(partner) or "партнёр"}]'
+        _send(vk, peer_id, random.choice(RP_RESPONSES[action]).format(target=other))
         return
 
-    if command == 'развестись':
-        _send(vk, peer_id, divorce(user_id))
-        return
+    if command == 'развестись': _send(vk, peer_id, divorce(user_id)); return
 
     for cmdname in ('усыновить', 'удочерить'):
         if command.startswith(cmdname + ' '):
             target = _target(command[len(cmdname) + 1:])
             result = adopt(user_id, target, vk)
-            if isinstance(result, tuple):
-                ok, msg = result
-            else:
-                ok, msg = True, result
+            if isinstance(result, tuple): ok, msg = result
+            else: ok, msg = True, result
             if ok:
                 from keyboards import family_proposal_keyboard
                 _send(vk, peer_id, msg, family_proposal_keyboard())
-            else:
-                _send(vk, peer_id, msg)
+            else: _send(vk, peer_id, msg)
             return
 
     if command.startswith('сдать в детдом '):
-        _send(vk, peer_id, relinquish(user_id, _target(command[len('сдать в детдом '):]), vk))
-        return
-
-    if command == 'уйти из семьи':
-        _send(vk, peer_id, leave_family(user_id))
-        return
+        _send(vk, peer_id, relinquish(user_id, _target(command[len('сдать в детдом '):]), vk)); return
+    if command == 'уйти из семьи': _send(vk, peer_id, leave_family(user_id)); return
 
     # ─── RP ─────────────────────────────────────────────
-    rp_names = ['обнять', 'поцеловать', 'пожать руку', 'погладить', 'ущипнуть', 'укусить',
-                'дать пять', 'пнуть', 'положить в дурку', 'посадить на бутылку', 'застрелить',
-                'курить', 'уснуть', 'разбудить', 'накормить', 'подарить', 'пиво']
-    rp_command = next((x for x in sorted(rp_names, key=len, reverse=True)
-                       if command == x or command.startswith(x + ' ')), None)
+    rp_names = ['обнять', 'поцеловать', 'пожать руку', 'погладить', 'ущипнуть', 'укусить', 'дать пять', 'пнуть', 'положить в дурку', 'посадить на бутылку', 'застрелить', 'курить', 'уснуть', 'разбудить', 'накормить', 'подарить', 'пиво']
+    rp_command = next((x for x in sorted(rp_names, key=len, reverse=True) if command == x or command.startswith(x + ' ')), None)
     if rp_command:
         result = handle_rp_command(rp_command, user_id, peer_id, vk, text, get_user)
         if result:
@@ -708,7 +424,7 @@ def handle_command(command, user_id, peer_id, vk, text):
                     _record_task_event(vk, peer_id, user_id, 'partner_rp')
         return
 
-        # ─── МАГАЗИН ────────────────────────────────────────
+    # ─── МАГАЗИН ────────────────────────────────────────
     if command == 'магазин':
         from keyboards import get_shop_menu
         is_adm = get_admin_level(user_id, peer_id) >= 1
@@ -721,21 +437,18 @@ def handle_command(command, user_id, peer_id, vk, text):
         category = {'дом': 'housing', 'машина': 'car', 'телефон': 'phone'}[m.group(1)]
         idx = int(m.group(2)) - 1
         items = get_items(category)
-        if not 0 <= idx < len(items):
-            return
+        if not 0 <= idx < len(items): return
         item = items[idx]
         ok, msg = buy_property(user_id, category, item[0])
         _send(vk, peer_id, msg)
-        if ok:
-            _record_task_event(vk, peer_id, user_id, 'property')
+        if ok: _record_task_event(vk, peer_id, user_id, 'property')
         return
 
     m = re.match(r'^продать\s+(дом|машина|телефон)$', command)
     if m:
         category = {'дом': 'housing', 'машина': 'car', 'телефон': 'phone'}[m.group(1)]
         current = get_property_value(user_id, category)
-        if current == 'Отсутствует':
-            return
+        if current == 'Отсутствует': return
         items = {x[0]: x[1] for x in get_items(category)}
         refund = items.get(current, 0) // 2
         with db_cursor(True) as (_, c):
@@ -750,8 +463,7 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, text_work)
         if text_work == 'отработал рабочий день.':
             _record_task_event(vk, peer_id, user_id, 'work')
-        if promoted_text:
-            _send(vk, peer_id, promoted_text)
+        if promoted_text: _send(vk, peer_id, promoted_text)
         return
 
     if command == 'устроиться':
@@ -759,23 +471,15 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, '💼 Выберите профессию:', profession_keyboard(), exclude_actor=True)
         return
 
-    if command == 'уволиться':
-        _send(vk, peer_id, fire(user_id))
-        return
+    if command == 'уволиться': _send(vk, peer_id, fire(user_id)); return
 
     return
 
-
 # ============ ЛЛ НОРМА ============
-
 def handle_norma(command, user_id, peer_id, vk):
-    """Set an admin's weekly report status. Supports `норма @user +` and legacy order."""
     parts = command.strip().split()
-    if not parts or parts[0].lower() != 'норма':
-        return
+    if not parts or parts[0].lower() != 'норма': return
 
-    # Preferred syntax: лл норма @user + / лл норма @user -.
-    # Keep the old syntax (лл норма + @user) working for compatibility.
     sign = None
     target_text = None
     if len(parts) >= 3 and parts[1] in ('+', '-'):
@@ -783,29 +487,16 @@ def handle_norma(command, user_id, peer_id, vk):
     elif len(parts) >= 3 and parts[-1] in ('+', '-'):
         sign, target_text = parts[-1], ' '.join(parts[1:-1])
 
-    if not sign or not target_text:
-        _send(vk, peer_id, 'Формат: `лл норма @user +` или `лл норма @user -`', exclude_actor=True)
-        return
-
+    if not sign or not target_text: return
     target = _target(target_text)
-    if not target:
-        _send(vk, peer_id, 'Не удалось распознать пользователя. Укажи упоминание @user.', exclude_actor=True)
-        return
-    if target == user_id:
-        _send(vk, peer_id, 'Нельзя ставить норму самому себе.', exclude_actor=True)
-        return
+    if not target or target == user_id: return
 
     actor_level = get_admin_level(user_id, peer_id)
-    if actor_level < 4:
-        _send(vk, peer_id, 'Недостаточно прав. Норма доступна заместителю куратора и выше.', exclude_actor=True)
+    if actor_level < 2: # Админ, Рекрутер, Активист (уровень 2 и выше)
+        _send(vk, peer_id, 'Недостаточно прав. Норма доступна Активисту и выше.', exclude_actor=True)
         return
-    if not get_user(target):
-        _send(vk, peer_id, 'Пользователь не найден.', exclude_actor=True)
-        return
+    if not get_user(target): return
 
-    # Roles 1–5 are local to individual chats. For the weekly admin norm,
-    # recognize a person's assigned admin role even when it was granted in
-    # another conversation; do not confuse profile visibility with no role.
     if get_display_admin_level(target) < 2:
         _send(vk, peer_id, f'{_user_link(vk, target)} не является администратором (минимум Активист).', exclude_actor=True)
         return

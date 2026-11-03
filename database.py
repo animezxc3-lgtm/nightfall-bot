@@ -161,10 +161,17 @@ def migrate_database():
         );
         CREATE INDEX IF NOT EXISTS idx_daily_task_user_date ON daily_task_instances(user_id, task_date, status);
         CREATE INDEX IF NOT EXISTS idx_daily_task_scope ON daily_task_instances(user_id, scope_peer_id, task_date);
+        
+        -- Новая таблица для настроек набора
+        CREATE TABLE IF NOT EXISTS recruit_settings (
+            peer_id INTEGER, 
+            role_level INTEGER, 
+            is_open INTEGER DEFAULT 1, 
+            PRIMARY KEY(peer_id, role_level)
+        );
         """)
 
         # CREATE TABLE IF NOT EXISTS does not add columns to an older database.
-        # Ensure columns required by current code exist without deleting user data.
         required_columns = {
             'users': {
                 'nickname': "TEXT DEFAULT ''",
@@ -294,7 +301,6 @@ def get_all_global_roles():
     with db_cursor() as (_, c): return c.execute("SELECT user_id, level FROM global_roles WHERE level>0").fetchall()
 
 def get_user_admin_rights(user_id):
-    """Return valid global and local admin assignments without mutating stored data."""
     with db_cursor() as (_, c):
         global_row = c.execute(
             'SELECT level FROM global_roles WHERE user_id=? AND level>0', (int(user_id),)
@@ -326,6 +332,12 @@ def clear_warnings(user_id, peer_id, is_admin=False):
     with db_cursor(True) as (_, c):
         c.execute("DELETE FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=?", (user_id, peer_id, 1 if is_admin else 0))
         c.execute(f"UPDATE users SET {'admin_warnings' if is_admin else 'warnings'} = 0 WHERE user_id=?", (user_id,))
+
+def annul_warnings(user_id, peer_id):
+    """Аннулирование предупреждений (например, при кике за 3/3)."""
+    with db_cursor(True) as (_, c):
+        c.execute("DELETE FROM warning_events WHERE user_id=? AND peer_id=? AND is_admin_warning=0", (user_id, peer_id))
+        c.execute("UPDATE users SET warnings = 0 WHERE user_id=?", (user_id,))
 
 def get_warning_count(user_id, peer_id):
     with db_cursor() as (_, c):
@@ -371,11 +383,9 @@ def update_coins(user_id, amount):
     with db_cursor(True) as (_, c): c.execute("UPDATE users SET coins=coins+? WHERE user_id=?", (amount, user_id))
 
 def grant_one_time_coins(user_id, amount=100000):
-    """Grant the initial coin bonus once per VK user, even across multiple chats/restarts."""
     user_id = int(user_id)
     amount = int(amount)
-    if user_id <= 0 or amount <= 0:
-        return False
+    if user_id <= 0 or amount <= 0: return False
     with db_cursor(True) as (_, c):
         inserted = c.execute(
             "INSERT OR IGNORE INTO one_time_coin_grants(user_id, amount) "
@@ -740,237 +750,125 @@ def get_chat_user_week_messages(peer_id, user_id, start_date, end_date):
         return r[0] if r and r[0] else 0
 
 def replace_rp_photos(command, photos):
-    """Atomically replace the cached photo list for one RP command."""
     normalized = []
     for attachment, photo_id, owner_id in photos:
-        if not attachment or photo_id is None or owner_id is None:
-            continue
+        if not attachment or photo_id is None or owner_id is None: continue
         normalized.append((str(command), str(attachment), int(photo_id), int(owner_id)))
-
     with db_cursor(True) as (_, c):
         c.execute("DELETE FROM rp_photos WHERE command=?", (command,))
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.executemany(
-            """INSERT OR IGNORE INTO rp_photos
-               (command, attachment, photo_id, owner_id, synced_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            [(cmd, attachment, photo_id, owner_id, now)
-             for cmd, attachment, photo_id, owner_id in normalized],
-        )
-
+        c.executemany("INSERT OR IGNORE INTO rp_photos(command, attachment, photo_id, owner_id, synced_at) VALUES (?, ?, ?, ?, ?)", [(cmd, attachment, photo_id, owner_id, now) for cmd, attachment, photo_id, owner_id in normalized])
 
 def get_random_rp_photo(command):
     with db_cursor() as (_, c):
-        row = c.execute(
-            "SELECT attachment FROM rp_photos WHERE command=? ORDER BY RANDOM() LIMIT 1",
-            (command,),
-        ).fetchone()
+        row = c.execute("SELECT attachment FROM rp_photos WHERE command=? ORDER BY RANDOM() LIMIT 1", (command,)).fetchone()
         return row[0] if row else None
-
 
 def get_rp_photo_count(command):
     with db_cursor() as (_, c):
-        row = c.execute(
-            "SELECT COUNT(*) FROM rp_photos WHERE command=?",
-            (command,),
-        ).fetchone()
+        row = c.execute("SELECT COUNT(*) FROM rp_photos WHERE command=?", (command,)).fetchone()
         return int(row[0] if row else 0)
 
-
-# Relationship, marriage, and family proposal persistence.
 def create_relationship_proposal(target_id, proposer_id):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_, c):
-        c.execute(
-            """INSERT INTO relationship_proposals(target_id, proposer_id, created_at)
-               VALUES(?, ?, ?)
-               ON CONFLICT(target_id) DO UPDATE SET
-                   proposer_id=excluded.proposer_id,
-                   created_at=excluded.created_at""",
-            (int(target_id), int(proposer_id), now),
-        )
-
+        c.execute("INSERT INTO relationship_proposals(target_id, proposer_id, created_at) VALUES(?, ?, ?) ON CONFLICT(target_id) DO UPDATE SET proposer_id=excluded.proposer_id, created_at=excluded.created_at", (int(target_id), int(proposer_id), now))
 
 def get_relationship_proposal(target_id):
     with db_cursor() as (_, c):
-        return c.execute(
-            "SELECT proposer_id, created_at FROM relationship_proposals WHERE target_id=?",
-            (int(target_id),),
-        ).fetchone()
-
+        return c.execute("SELECT proposer_id, created_at FROM relationship_proposals WHERE target_id=?", (int(target_id),)).fetchone()
 
 def delete_relationship_proposal(target_id):
-    with db_cursor(True) as (_, c):
-        c.execute("DELETE FROM relationship_proposals WHERE target_id=?", (int(target_id),))
-
+    with db_cursor(True) as (_, c): c.execute("DELETE FROM relationship_proposals WHERE target_id=?", (int(target_id),))
 
 def create_marriage_proposal(target_id, proposer_id, surname):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_, c):
-        c.execute(
-            """INSERT INTO marriage_proposals(target_id, proposer_id, surname, created_at)
-               VALUES(?, ?, ?, ?)
-               ON CONFLICT(target_id) DO UPDATE SET
-                   proposer_id=excluded.proposer_id,
-                   surname=excluded.surname,
-                   created_at=excluded.created_at""",
-            (int(target_id), int(proposer_id), str(surname), now),
-        )
-
+        c.execute("INSERT INTO marriage_proposals(target_id, proposer_id, surname, created_at) VALUES(?, ?, ?, ?) ON CONFLICT(target_id) DO UPDATE SET proposer_id=excluded.proposer_id, surname=excluded.surname, created_at=excluded.created_at", (int(target_id), int(proposer_id), str(surname), now))
 
 def get_marriage_proposal(target_id):
     with db_cursor() as (_, c):
-        return c.execute(
-            "SELECT proposer_id, surname, created_at FROM marriage_proposals WHERE target_id=?",
-            (int(target_id),),
-        ).fetchone()
-
+        return c.execute("SELECT proposer_id, surname, created_at FROM marriage_proposals WHERE target_id=?", (int(target_id),)).fetchone()
 
 def delete_marriage_proposal(target_id):
-    with db_cursor(True) as (_, c):
-        c.execute("DELETE FROM marriage_proposals WHERE target_id=?", (int(target_id),))
-
+    with db_cursor(True) as (_, c): c.execute("DELETE FROM marriage_proposals WHERE target_id=?", (int(target_id),))
 
 def create_family_proposal(target_id, proposer_id, relation_type):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_, c):
-        c.execute(
-            """INSERT INTO family_proposals(target_id, proposer_id, relation_type, created_at)
-               VALUES(?, ?, ?, ?)
-               ON CONFLICT(target_id) DO UPDATE SET
-                   proposer_id=excluded.proposer_id,
-                   relation_type=excluded.relation_type,
-                   created_at=excluded.created_at""",
-            (int(target_id), int(proposer_id), str(relation_type), now),
-        )
-
+        c.execute("INSERT INTO family_proposals(target_id, proposer_id, relation_type, created_at) VALUES(?, ?, ?, ?) ON CONFLICT(target_id) DO UPDATE SET proposer_id=excluded.proposer_id, relation_type=excluded.relation_type, created_at=excluded.created_at", (int(target_id), int(proposer_id), str(relation_type), now))
 
 def get_family_proposal(target_id):
     with db_cursor() as (_, c):
-        return c.execute(
-            "SELECT proposer_id, relation_type, created_at FROM family_proposals WHERE target_id=?",
-            (int(target_id),),
-        ).fetchone()
-
+        return c.execute("SELECT proposer_id, relation_type, created_at FROM family_proposals WHERE target_id=?", (int(target_id),)).fetchone()
 
 def delete_family_proposal(target_id):
-    with db_cursor(True) as (_, c):
-        c.execute("DELETE FROM family_proposals WHERE target_id=?", (int(target_id),))
+    with db_cursor(True) as (_, c): c.execute("DELETE FROM family_proposals WHERE target_id=?", (int(target_id),))
 
-
-# Weekly tasks persistence.
 def get_weekly_tasks(user_id):
     with db_cursor() as (_, c):
-        row = c.execute(
-            """SELECT week_key, task1_json, task2_json, completed1, completed2
-               FROM weekly_tasks WHERE user_id=?""",
-            (int(user_id),),
-        ).fetchone()
-    if not row:
-        return None
-    try:
-        tasks = [json.loads(row[1]), json.loads(row[2])]
-    except (TypeError, json.JSONDecodeError):
-        return None
-    return {
-        'user_id': int(user_id),
-        'week_key': row[0],
-        'tasks': tasks,
-        'completed': [bool(row[3]), bool(row[4])],
-    }
-
+        row = c.execute("SELECT week_key, task1_json, task2_json, completed1, completed2 FROM weekly_tasks WHERE user_id=?", (int(user_id),)).fetchone()
+    if not row: return None
+    try: tasks = [json.loads(row[1]), json.loads(row[2])]
+    except (TypeError, json.JSONDecodeError): return None
+    return {'user_id': int(user_id), 'week_key': row[0], 'tasks': tasks, 'completed': [bool(row[3]), bool(row[4])]}
 
 def save_weekly_tasks(user_id, week_key, task1, task2):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_, c):
-        c.execute(
-            """INSERT INTO weekly_tasks
-               (user_id, week_key, task1_json, task2_json, completed1, completed2, updated_at)
-               VALUES (?, ?, ?, ?, 0, 0, ?)
-               ON CONFLICT(user_id) DO UPDATE SET
-                   week_key=excluded.week_key,
-                   task1_json=excluded.task1_json,
-                   task2_json=excluded.task2_json,
-                   completed1=0,
-                   completed2=0,
-                   updated_at=excluded.updated_at""",
-            (
-                int(user_id),
-                str(week_key),
-                json.dumps(task1, ensure_ascii=False),
-                json.dumps(task2, ensure_ascii=False),
-                now,
-            ),
-        )
-
+        c.execute("INSERT INTO weekly_tasks(user_id, week_key, task1_json, task2_json, completed1, completed2, updated_at) VALUES (?, ?, ?, ?, 0, 0, ?) ON CONFLICT(user_id) DO UPDATE SET week_key=excluded.week_key, task1_json=excluded.task1_json, task2_json=excluded.task2_json, completed1=0, completed2=0, updated_at=excluded.updated_at", (int(user_id), str(week_key), json.dumps(task1, ensure_ascii=False), json.dumps(task2, ensure_ascii=False), now))
 
 def weekly_task_is_completed(user_id, slot):
     data = get_weekly_tasks(user_id)
     return bool(data and 0 <= int(slot) < len(data['completed']) and data['completed'][int(slot)])
 
-
 def complete_weekly_task(user_id, slot):
     slot = int(slot)
-    if slot not in (0, 1):
-        raise ValueError("slot must be 0 or 1")
+    if slot not in (0, 1): raise ValueError("slot must be 0 or 1")
     column = "completed1" if slot == 0 else "completed2"
     with db_cursor(True) as (_, c):
-        c.execute(
-            f"UPDATE weekly_tasks SET {column}=1, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
-            (int(user_id),),
-        )
-
+        c.execute(f"UPDATE weekly_tasks SET {column}=1, updated_at=CURRENT_TIMESTAMP WHERE user_id=?", (int(user_id),))
 
 def get_task_progress(user_id, week_key, task_id):
     with db_cursor() as (_, c):
-        row = c.execute(
-            "SELECT progress FROM task_progress WHERE user_id=? AND week_key=? AND task_id=?",
-            (int(user_id), str(week_key), str(task_id)),
-        ).fetchone()
+        row = c.execute("SELECT progress FROM task_progress WHERE user_id=? AND week_key=? AND task_id=?", (int(user_id), str(week_key), str(task_id))).fetchone()
         return int(row[0]) if row else 0
-
 
 def set_task_progress(user_id, week_key, task_id, progress):
     with db_cursor(True) as (_, c):
-        c.execute(
-            """INSERT INTO task_progress(user_id, week_key, task_id, progress)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(user_id, week_key, task_id) DO UPDATE SET
-                   progress=excluded.progress""",
-            (int(user_id), str(week_key), str(task_id), max(0, int(progress))),
-        )
-
+        c.execute("INSERT INTO task_progress(user_id, week_key, task_id, progress) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, week_key, task_id) DO UPDATE SET progress=excluded.progress", (int(user_id), str(week_key), str(task_id), max(0, int(progress))))
 
 def get_admin_chat_stats(peer_id, user_id):
-    """Message and invite counts for an admin within one conversation."""
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
     week = _week_start(now).strftime("%Y-%m-%d")
     month = _month_start(now).strftime("%Y-%m-%d")
     with db_cursor() as (_, c):
         def count_messages(cond, params=()):
-            row = c.execute(
-                f"SELECT COALESCE(SUM(count), 0) FROM chat_message_stats WHERE peer_id=? AND user_id=? AND {cond}",
-                (int(peer_id), int(user_id), *params),
-            ).fetchone()
+            row = c.execute(f"SELECT COALESCE(SUM(count), 0) FROM chat_message_stats WHERE peer_id=? AND user_id=? AND {cond}", (int(peer_id), int(user_id), *params)).fetchone()
             return int(row[0] or 0)
         def count_invites(cond, params=()):
-            row = c.execute(
-                f"SELECT COUNT(*) FROM chat_members WHERE peer_id=? AND invited_by=? AND substr(first_join_at,1,10) {cond}",
-                (int(peer_id), int(user_id), *params),
-            ).fetchone()
+            row = c.execute(f"SELECT COUNT(*) FROM chat_members WHERE peer_id=? AND invited_by=? AND substr(first_join_at,1,10) {cond}", (int(peer_id), int(user_id), *params)).fetchone()
             return int(row[0] or 0)
         return {
-            'messages': {
-                'today': count_messages('date = ?', (today,)),
-                'week': count_messages('date >= ?', (week,)),
-                'month': count_messages('date >= ?', (month,)),
-                'total': count_messages('1=1'),
-            },
-            'invites': {
-                'today': count_invites('= ?', (today,)),
-                'week': count_invites('>= ?', (week,)),
-                'month': count_invites('>= ?', (month,)),
-                'total': count_invites('IS NOT NULL'),
-            },
+            'messages': {'today': count_messages('date = ?', (today,)), 'week': count_messages('date >= ?', (week,)), 'month': count_messages('date >= ?', (month,)), 'total': count_messages('1=1')},
+            'invites': {'today': count_invites('= ?', (today,)), 'week': count_invites('>= ?', (week,)), 'month': count_invites('>= ?', (month,)), 'total': count_invites('IS NOT NULL')},
         }
+
+def get_recruit_settings(peer_id):
+    """Возвращает список открытых ролей для беседы."""
+    with db_cursor() as (_, c):
+        rows = c.execute("SELECT role_level FROM recruit_settings WHERE peer_id=? AND is_open=1", (peer_id,)).fetchall()
+        if not rows: return [1, 2, 3, 4, 5]
+        return [r[0] for r in rows]
+
+def toggle_recruit_role(peer_id, role_level):
+    with db_cursor(True) as (_, c):
+        row = c.execute("SELECT is_open FROM recruit_settings WHERE peer_id=? AND role_level=?", (peer_id, role_level)).fetchone()
+        if row:
+            new_val = 0 if row[0] else 1
+            c.execute("UPDATE recruit_settings SET is_open=? WHERE peer_id=? AND role_level=?", (new_val, peer_id, role_level))
+            return bool(new_val)
+        else:
+            c.execute("INSERT INTO recruit_settings(peer_id, role_level, is_open) VALUES(?,?,1)", (peer_id, role_level))
+            return True
