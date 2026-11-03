@@ -4,7 +4,7 @@ import re
 import json
 from config import (
     PIN_COMMUNITY_LINK, PIN_RULES_LINK, PIN_CASINO_LINK, PIN_ANARCHY_LINK,
-    APPLICATIONS_PEER_ID, CREATOR_ID, GROUP_ID, MAIN_CHATS, EXTRA_CHATS, ADMIN_CHATS, CITADEL_CHAT
+    APPLICATIONS_PEER_ID, CREATOR_ID, GROUP_ID, MAIN_CHATS, EXTRA_CHATS, CITADEL_CHAT
 )
 
 from database import (
@@ -18,9 +18,11 @@ def _vk_name(vk, uid):
     try:
         info = vk.users.get(user_ids=uid)[0]
         return (f"{info.get('first_name', '')} {info.get('last_name', '')}").strip() or 'Пользователь'
-    except Exception: return 'Пользователь'
+    except Exception: 
+        return 'Пользователь'
 
-def _mention(vk, uid): return f'[id{uid}|{_vk_name(vk, uid)}]'
+def _mention(vk, uid): 
+    return f'[id{uid}|{_vk_name(vk, uid)}]'
 
 def _chat_title(vk, peer_id):
     try:
@@ -29,14 +31,17 @@ def _chat_title(vk, peer_id):
         if items:
             settings = items[0].get('chat_settings', {})
             return settings.get('title') or ''
-    except Exception as e: print(f'⚠️ Не удалось получить название беседы {peer_id}: {e}')
+    except Exception as e: 
+        print(f'⚠️ Не удалось получить название беседы {peer_id}: {e}')
     return ''
 
 def _header_line(title):
     title = (title or '').strip()
-    if not title: return '🌙 NightFall 🌙'
+    if not title: 
+        return '🌙 NightFall 🌙'
     match = re.match(r'^(.*?)(\d+)\s*$', title)
-    if match: return f'🌙 {match.group(1).strip()} {match.group(2)} 🌙'
+    if match: 
+        return f'🌙 {match.group(1).strip()} {match.group(2)} 🌙'
     return f'🌙 {title} 🌙'
 
 def build_pin_text(vk, peer_id):
@@ -54,24 +59,30 @@ def build_pin_text(vk, peer_id):
         for uid, level in get_all_global_roles():
             if uid in seen: continue
             if level in (6, 7):
-                roles[level].append(uid); seen.add(uid)
-    except Exception as e: print(f'⚠️ {e}')
+                roles[level].append(uid)
+                seen.add(uid)
+    except Exception as e: 
+        print(f'⚠️ {e}')
+        
     if CREATOR_ID not in seen:
-        roles[7].append(CREATOR_ID); seen.add(CREATOR_ID)
+        roles[7].append(CREATOR_ID)
+        seen.add(CREATOR_ID)
 
     # Собираем локальные роли
     try:
         for uid, level in get_admins_for_chat(peer_id):
             if uid in seen: continue
             if level in (1, 2, 3, 4, 5):
-                roles[level].append(uid); seen.add(uid)
-    except Exception as e: print(f'⚠️ {e}')
+                roles[level].append(uid)
+                seen.add(uid)
+    except Exception as e: 
+        print(f'⚠️ {e}')
 
     lines = [_header_line(title), '']
     lines.append('( ⌒──────── *⋆info⋆* ──────── ⌒)')
     lines.append('')
     
-    # Информационный блок (как на скрине 3)
+    # Информационный блок
     lines.append('— 📄Правила проекта')
     lines.append(f'[{PIN_RULES_LINK}|Ознакомиться с правилами]')
     lines.append('— 📄Меню проекта:')
@@ -90,29 +101,53 @@ def build_pin_text(vk, peer_id):
     for level, emoji, label in global_roles:
         lines.append(f'➤ {emoji} {label}:')
         if roles[level]:
-            for uid in roles[level]: lines.append(f'- {_mention(vk, uid)}')
-        else: lines.append('absent')
+            for uid in roles[level]: 
+                lines.append(f'- {_mention(vk, uid)}')
+        else: 
+            lines.append('absent')
         lines.extend(['', DIVIDER, ''])
 
-    # Если это Цитадель (админская беседа)
+    # СПЕЦИАЛЬНЫЙ БЛОК ДЛЯ ЦИТАДЕЛИ
     if is_citadel:
         lines.append('➤ 🌟 Кураторы:')
-        if roles[5]:
-            for uid in roles[5]:
-                # Для цитадели выводим кураторов с указанием бесед, где они сидят
-                lines.append(f'- {_mention(vk, uid)}')
-        else: lines.append('absent')
         lines.append('')
-        lines.append('Беседы, их номера — @Имя Фамилия/absent')
+        
+        # Формируем список всех бесед
+        chat_list = []
+        for i, mc in enumerate(MAIN_CHATS, 1):
+            chat_list.append((f'NightFall {i}', mc))
+        chat_list.append(('NF || Anarchy', EXTRA_CHATS[0]))
+        chat_list.append(('NF || Casino', EXTRA_CHATS[1]))
+        
+        for name, c_peer in chat_list:
+            # Ищем куратора в этой беседе
+            curator_id = None
+            try:
+                for uid, lvl in get_admins_for_chat(c_peer):
+                    if lvl == 5:
+                        curator_id = uid
+                        break
+            except Exception:
+                pass
+                
+            if curator_id:
+                curator_name = _vk_name(vk, curator_id)
+                lines.append(f'{name} — {curator_name}')
+            else:
+                lines.append(f'{name} — absent')
+                
         lines.append('')
         lines.append(DIVIDER)
+        lines.append('')
     
     # Если это дополнительные беседы (Анархия/Казино)
     elif is_extra:
         lines.append('➤ 🌟 Куратор:')
         if roles[5]:
-            for uid in roles[5]: lines.append(f'- {_mention(vk, uid)}')
-        else: lines.append('absent')
+            for uid in roles[5]: 
+                lines.append(f'- {_mention(vk, uid)}')
+        else: 
+            lines.append('absent')
         lines.extend(['', DIVIDER, ''])
     else:
         # Для основных бесед выводим всех локальных
@@ -126,8 +161,10 @@ def build_pin_text(vk, peer_id):
         for level, emoji, label in local_roles:
             lines.append(f'➤ {emoji} {label}:')
             if roles[level]:
-                for uid in roles[level]: lines.append(f'- {_mention(vk, uid)}')
-            else: lines.append('absent')
+                for uid in roles[level]: 
+                    lines.append(f'- {_mention(vk, uid)}')
+            else: 
+                lines.append('absent')
             lines.append('')
 
     # Подвал для всех
@@ -166,13 +203,15 @@ def remember_pinned_message(peer_id, pinned):
     try:
         set_chat_pin(peer_id, conversation_message_id=cmid, message_id=message_id)
         return True
-    except Exception as e: return False
+    except Exception as e: 
+        return False
 
 def send_new_pin(vk, peer_id, text):
     try:
         result = vk.messages.send(peer_id=peer_id, random_id=0, message=text, disable_mentions=True)
     except Exception as e:
-        print(f'Не удалось отправить закреп: {e}'); return None, None
+        print(f'Не удалось отправить закреп: {e}')
+        return None, None
 
     message_id = result if isinstance(result, int) else None
     cmid = None
@@ -182,15 +221,22 @@ def send_new_pin(vk, peer_id, text):
             info = vk.messages.getById(message_ids=message_id)
             items = info.get('items') or []
             if items: cmid = items[0].get('conversation_message_id')
-        except Exception as e: print(f'getById: {e}')
+        except Exception as e: 
+            print(f'getById: {e}')
 
     pinned_ok = False
     if cmid:
-        try: vk.messages.pin(peer_id=peer_id, conversation_message_id=cmid); pinned_ok = True
-        except Exception as e: print(f'⚠️ Не удалось закрепить: {e}')
+        try: 
+            vk.messages.pin(peer_id=peer_id, conversation_message_id=cmid)
+            pinned_ok = True
+        except Exception as e: 
+            print(f'⚠️ Не удалось закрепить: {e}')
 
-    try: set_chat_pin(peer_id, conversation_message_id=cmid, message_id=message_id)
-    except Exception as e: print(f'Ошибка записи chat_pins: {e}')
+    try: 
+        set_chat_pin(peer_id, conversation_message_id=cmid, message_id=message_id)
+    except Exception as e: 
+        print(f'Ошибка записи chat_pins: {e}')
+        
     return message_id, cmid
 
 def edit_pin(vk, peer_id, text, pin):
@@ -203,14 +249,16 @@ def edit_pin(vk, peer_id, text, pin):
             vk.messages.edit(peer_id=peer_id, conversation_message_id=cmid, message=text, disable_mentions=True)
             print(f'✅ Закреп {peer_id} отредактирован через cmid={cmid}')
             return True
-        except Exception as e: print(f'Не удалось изменить: {e}')
+        except Exception as e: 
+            print(f'Не удалось изменить: {e}')
 
     if message_id:
         try:
             vk.messages.edit(peer_id=peer_id, message_id=message_id, message=text, disable_mentions=True)
             print(f'✅ Закреп {peer_id} отредактирован через message_id={message_id}')
             return True
-        except Exception as e: print(f'Не удалось изменить: {e}')
+        except Exception as e: 
+            print(f'Не удалось изменить: {e}')
 
     return False
 
@@ -218,7 +266,8 @@ def refresh_pin_if_exists(vk, peer_id):
     pinned = get_real_pinned_message(vk, peer_id)
     if pinned and pinned.get('_error'): return False, 'api_error'
     if not pinned:
-        reset_chat_pin_cmid(peer_id); return False, 'no_pin'
+        reset_chat_pin_cmid(peer_id)
+        return False, 'no_pin'
 
     expected_from_id = -abs(int(GROUP_ID))
     if pinned.get('from_id') != expected_from_id:
@@ -231,7 +280,8 @@ def refresh_pin_if_exists(vk, peer_id):
 
     if edit_pin(vk, peer_id, text, pin_dict): return True, 'updated'
 
-    reset_chat_pin_cmid(peer_id); return False, 'edit_error'
+    reset_chat_pin_cmid(peer_id)
+    return False, 'edit_error'
 
 def update_pin_in_chat(vk, peer_id, notify=False):
     result = refresh_pin_if_exists(vk, peer_id)
@@ -250,18 +300,21 @@ def update_all_pins(vk):
         if peer_id == APPLICATIONS_PEER_ID: continue
         try:
             if is_chat_hidden(peer_id): continue
-        except Exception: pass
+        except Exception: 
+            pass
         try:
             result = refresh_pin_if_exists(vk, peer_id)
             results.append((peer_id, result[1]))
         except Exception as e:
-            print(f'❌ Ошибка обновления {peer_id}: {e}'); results.append((peer_id, 'error'))
+            print(f'❌ Ошибка обновления {peer_id}: {e}')
+            results.append((peer_id, 'error'))
     return results
 
 def refresh_after_admin_change(vk, peer_id=None, global_change=False):
     if global_change:
         print('🔄 Изменена глобальная администрация. Обновляю закрепы.')
         return update_all_pins(vk)
-    if peer_id is None: return False, 'no_peer'
+    if peer_id is None: 
+        return False, 'no_peer'
     print(f'🔄 Изменена администрация в беседе {peer_id}. Обновляю закреп.')
     return update_pin_in_chat(vk, peer_id)
