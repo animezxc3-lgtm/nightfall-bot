@@ -25,6 +25,51 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
     is_creator = int(user_id) == int(CREATOR_ID)
     def menu_kb(admin=None): return menu_keyboard(is_admin if admin is None else admin, is_creator)
 
+        # --- ОТЧЕТЫ (НОРМА) ---
+    if cmd == 'norm_skip_photos':
+        from norm_handler import generate_and_send_report
+        from database import delete_application
+        delete_application(user_id) 
+        generate_and_send_report(user_id, vk, [])
+        edit('✅ Отчет сформирован и отправлен в Контроль (без скринов).')
+        return
+
+    if cmd in ('norm_accept', 'norm_decline'):
+        report_id = payload.get('report_id')
+        if not report_id: return
+        
+        from database import get_norm_report, update_norm_status
+        from norm_handler import check_norm_rights
+        
+        report = get_norm_report(report_id)
+        if not report:
+            edit('Этот отчет больше не существует.')
+            return
+            
+        target_uid, old_text, _ = report
+        
+        if not check_norm_rights(user_id, target_uid):
+            edit('❌ У вас нет прав на проверку этого отчета. Вы не являетесь Куратором нужной беседы или Вершителем.')
+            return
+            
+        status = 'accepted' if cmd == 'norm_accept' else 'declined'
+        update_norm_status(report_id, status, user_id)
+        
+        new_status = '✅ ОДОБРЕНО' if status == 'accepted' else '❌ ОТКЛОНЕНО'
+        # Ищем блок "Проверяют:" и заменяем его
+        if '\n\nПроверяют:' in old_text:
+            new_text = old_text.replace('\n\nПроверяют:', f'\n\n─── Статус: {new_status} (проверил: [id{user_id}|Админ]) ───\nПроверяют:')
+        else:
+            new_text = old_text + f'\n\n─── Статус: {new_status} ───'
+            
+        edit(new_text, {'inline': True, 'buttons': []})
+        
+        try:
+            msg = 'Твой отчет был одобрен!' if status == 'accepted' else 'Твой отчет был отклонен. Проверь цифры и попробуй снова.'
+            vk.messages.send(peer_id=target_uid, random_id=0, message=msg, disable_mentions=True)
+        except: pass
+        return
+
     # --- НАСТРОЙКИ НАБОРА (ТОЛЬКО ДЛЯ СОЗДАТЕЛЯ) ---
     if cmd == 'settings_open':
         if not is_creator: return

@@ -4,10 +4,11 @@ import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from config import TOKEN, GROUP_ID, CREATOR_ID, ALLOWED_IN_DM, ALL_BOT_CHATS, MAIN_CHATS, EXTRA_CHATS, APPLICATIONS_PEER_ID
 from database import (
-    migrate_database, user_exists, create_user, set_admin_level, set_global_role, ensure_chat,
+    migrate_database, migrate_norm_tables, user_exists, create_user, set_admin_level, set_global_role, ensure_chat,
     add_message_count, claim_power_for_messages, get_feature, record_chat_join,
     get_chat_join_date, get_welcome_data, is_twink, get_owner, get_user_admin_rights,
-    grant_one_time_coins, coin_grant_chat_scanned, mark_coin_grant_chat_scanned
+    grant_one_time_coins, coin_grant_chat_scanned, mark_coin_grant_chat_scanned, is_banned,
+    get_application, delete_application, record_tag
 )
 from handlers.message_handlers import handle_command
 from handlers.button_handlers import handle_button
@@ -61,7 +62,10 @@ print('⚡ Запуск бота...')
 vk_session = vk_api.VkApi(token=TOKEN)
 vk = vk_session.get_api()
 longpoll = VkBotLongPoll(vk_session, GROUP_ID)
+
 migrate_database()
+migrate_norm_tables()
+
 try: repair_legacy_local_role_peer_ids(vk)
 except Exception as e: print(f'[RIGHTS][MIGRATION] {e}')
 
@@ -124,7 +128,7 @@ for event in longpoll.listen():
         
         if uid <= 0: continue
 
-        # ФИЛЬТР БЕСЕД: Бот работает только в разрешенных
+        # ФИЛЬТР БЕСЕД
         if is_chat and peer not in ALL_BOT_CHATS: continue
 
         action = m.get('action') or {}
@@ -144,7 +148,7 @@ for event in longpoll.listen():
                 continue
             continue
 
-        # --- ВХОД В БЕСЕДУ ---
+        # --- ВХОД В БЕСЕДУ (в т.ч. забаненных) ---
         invited_uid = action.get('member_id') if isinstance(action, dict) else None
         if is_chat and action_type in ('chat_invite_user', 'chat_invite_user_by_link') and invited_uid:
             if not user_exists(invited_uid):
@@ -155,6 +159,13 @@ for event in longpoll.listen():
             ensure_chat(peer)
             record_chat_join(peer, invited_uid, invited_by=uid)
             
+            if is_banned(invited_uid):
+                try:
+                    vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=invited_uid)
+                    vk.messages.send(peer_id=peer, random_id=0, message='Забаненный пользователь был исключён.', disable_mentions=True)
+                except Exception: pass
+                continue
+
             if peer in EXTRA_CHATS:
                 in_main = False
                 for mc in MAIN_CHATS:
@@ -185,9 +196,42 @@ for event in longpoll.listen():
 
         # --- ЛИЧНЫЕ СООБЩЕНИЯ ---
         if not is_chat:
+            # ПРОВЕРКА НА ОЖИДАНИЕ ФОТО ДЛЯ ОТЧЕТА
+            app = get_application(uid)
+            if app and app['state'] == 'await_norm_photos':
+                photos = []
+                for att in m.get('attachments', []):
+                    if att['type'] == 'photo':
+                        p = att['photo']
+                        photos.append(f"photo{p['owner_id']}_{p['id']}")
+                
+                if not photos:
+                    vk.messages.send(peer_id=uid, random_id=0, message='❌ Я не вижу фото. Прикрепи фото или нажми "Пропустить".', disable_mentions=True)
+                    continue
+                    
+                delete_application(uid)
+                from norm_handler import generate_and_send_report
+                generate_and_send_report(uid, vk, photos)
+                vk.messages.send(peer_id=uid, random_id=0, message='✅ Отчет сформирован и отправлен в Контроль.', disable_mentions=True)
+                continue
+
             lowered = text.lower()
             if lowered.startswith('лл '):
                 command = lowered[3:].strip()
+                if command == 'отчет':
+                    from database import upsert_application
+                    upsert_application(uid, 'await_norm_photos', 0, [])
+                    
+                    from keyboards import norm_skip_photos_keyboard
+                    vk.messages.send(
+                        peer_id=uid, 
+                        random_id=0, 
+                        message='Прикрепи скриншоты проделанной работы (до 10 фото) и отправь следующим сообщением. Если фото нет — нажми кнопку.', 
+                        keyboard=json.dumps(norm_skip_photos_keyboard(), ensure_ascii=False), 
+                        disable_mentions=True
+                    )
+                    continue
+
                 if command == 'заявка':
                     reply = start_application(uid, vk)
                     if reply:
@@ -256,6 +300,15 @@ for event in longpoll.listen():
         ensure_chat(peer)
         grant_starting_coins_to_chat_members(peer)
         add_message_count(uid, peer)
+        
+        # СЧИТАЕМ ALL И ONLINE
+        if get_admin_level(uid, peer) >= 1:
+            text_lower = text.lower()
+            if '@all' in text_lower:
+                record_tag(uid, peer, 'all')
+            if '@online' in text_lower:
+                record_tag(uid, peer, 'online')
+
         try:
             awarded_tasks = task_event(uid, 'messages', peer_id=peer)
             notify_task_rewards(vk, peer, uid, awarded_tasks)

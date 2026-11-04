@@ -871,3 +871,66 @@ def toggle_recruit_role(peer_id, role_level):
         else:
             c.execute("INSERT INTO recruit_settings(peer_id, role_level, is_open) VALUES(?,?,1)", (peer_id, role_level))
             return True
+# --- СИСТЕМА ОТЧЕТОВ (НОРМА) ---
+
+def migrate_norm_tables():
+    with db_cursor(True) as (_, c):
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS norm_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            report_text TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            reviewed_by INTEGER,
+            reviewed_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS norm_photos (
+            report_id INTEGER NOT NULL,
+            attachment TEXT NOT NULL,
+            PRIMARY KEY(report_id, attachment)
+        );
+        CREATE TABLE IF NOT EXISTS admin_tags_stats (
+            user_id INTEGER NOT NULL,
+            peer_id INTEGER NOT NULL,
+            tag_type TEXT NOT NULL,
+            date TEXT NOT NULL,
+            count INTEGER DEFAULT 1,
+            PRIMARY KEY(user_id, peer_id, tag_type, date)
+        );
+        """)
+
+def create_norm_report(user_id, report_text):
+    with db_cursor(True) as (_, c):
+        c.execute("INSERT INTO norm_reports(user_id, report_text) VALUES(?,?)", (user_id, report_text))
+        return c.lastrowid
+
+def add_norm_photo(report_id, attachment):
+    with db_cursor(True) as (_, c):
+        c.execute("INSERT OR IGNORE INTO norm_photos(report_id, attachment) VALUES(?,?)", (report_id, attachment))
+
+def get_norm_report(report_id):
+    with db_cursor() as (_, c):
+        r = c.execute("SELECT user_id, report_text, status FROM norm_reports WHERE id=?", (report_id,)).fetchone()
+        return r if r else None
+
+def update_norm_status(report_id, status, reviewer_id):
+    with db_cursor(True) as (_, c):
+        c.execute("UPDATE norm_reports SET status=?, reviewed_by=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?", (status, reviewer_id, report_id))
+
+def get_admin_tags_stats(user_id, start_date):
+    with db_cursor() as (_, c):
+        rows = c.execute("SELECT tag_type, SUM(count) FROM admin_tags_stats WHERE user_id=? AND date >= ? GROUP BY tag_type", (user_id, start_date)).fetchall()
+        res = {'all': 0, 'online': 0}
+        for row in rows:
+            res[row[0]] = row[1]
+        return res
+
+def record_tag(user_id, peer_id, tag_type):
+    today = datetime.now().strftime("%Y-%m-%d")
+    with db_cursor(True) as (_, c):
+        c.execute("""
+            INSERT INTO admin_tags_stats(user_id, peer_id, tag_type, date, count) 
+            VALUES(?,?,?,?,1) 
+            ON CONFLICT(user_id, peer_id, tag_type, date) DO UPDATE SET count = count + 1
+        """, (user_id, peer_id, tag_type, today))

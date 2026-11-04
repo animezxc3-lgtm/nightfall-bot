@@ -150,3 +150,14 @@ def recruit_settings_keyboard(peer_id):
         buttons.append([_btn(f'{status} {name}', 'toggle_recruit', peer_id=peer_id, role=level)])
     buttons.append([_btn('⬅️ Назад', 'settings_menu')])
     return {'inline': True, 'buttons': buttons}
+
+def norm_review_keyboard(report_id):
+    return {'inline': True, 'buttons': [[
+        _btn('✅ Одобрить', 'norm_accept', report_id=report_id),
+        _btn('❌ Отклонить', 'norm_decline', report_id=report_id),
+    ]]}
+
+def norm_skip_photos_keyboard():
+    return {'inline': True, 'buttons': [[
+        _btn('Пропустить', 'norm_skip_photos')
+    ]]}
