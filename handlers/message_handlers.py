@@ -173,11 +173,7 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, msg)
         if target == user_id: _record_task_event(vk, peer_id, user_id, 'activity')
         return
-
-    if command == 'норма' or command.startswith('норма '):
-        handle_norma(command, user_id, peer_id, vk)
-        return
-
+    
     # ─── ТВИНКИ (СО СТАТИСТИКОЙ) ──────────────────────────
     if command == 'твинк' or command.startswith('твинк '):
         parts = command.split(maxsplit=2)
