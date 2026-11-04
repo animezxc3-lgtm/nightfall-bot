@@ -25,7 +25,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
     is_creator = int(user_id) == int(CREATOR_ID)
     def menu_kb(admin=None): return menu_keyboard(is_admin if admin is None else admin, is_creator)
 
-        # --- ОТЧЕТЫ (НОРМА) ---
+    # --- ОТЧЕТЫ (НОРМА) ---
     if cmd == 'norm_skip_photos':
         from norm_handler import generate_and_send_report
         from database import delete_application
@@ -40,6 +40,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         
         from database import get_norm_report, update_norm_status
         from norm_handler import check_norm_rights
+        from relationships import get_display_name
         
         report = get_norm_report(report_id)
         if not report:
@@ -49,18 +50,28 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         target_uid, old_text, _ = report
         
         if not check_norm_rights(user_id, target_uid):
-            edit('❌ У вас нет прав на проверку этого отчета. Вы не являетесь Куратором нужной беседы или Вершителем.')
+            try:
+                vk.messages.send(peer_id=user_id, random_id=0, message='Недостаточно прав.', disable_mentions=True)
+            except: pass
             return
             
         status = 'accepted' if cmd == 'norm_accept' else 'declined'
         update_norm_status(report_id, status, user_id)
         
-        new_status = '✅ ОДОБРЕНО' if status == 'accepted' else '❌ ОТКЛОНЕНО'
-        # Ищем блок "Проверяют:" и заменяем его
-        if '\n\nПроверяют:' in old_text:
-            new_text = old_text.replace('\n\nПроверяют:', f'\n\n─── Статус: {new_status} (проверил: [id{user_id}|Админ]) ───\nПроверяют:')
+        admin_name = get_display_name(user_id) or f'Пользователь'
+        admin_link = f'[id{user_id}|{admin_name}]'
+        
+        if status == 'accepted':
+            status_line = f'─── Статус: ✅ ОДОБРЕНО (проверил: {admin_link}) ───'
+            footer = '⋅⋆✦──── ⋆⋅Норма сдана⋅⋆ ────✦⋆⋅'
         else:
-            new_text = old_text + f'\n\n─── Статус: {new_status} ───'
+            status_line = f'─── Статус: ❌ ОТКЛОНЕНО (проверил: {admin_link}) ───'
+            footer = '⋅⋆✦──── ⋆⋅Требует исправлений⋅⋆ ────✦⋆⋅'
+            
+        if '\n\nПроверяют:' in old_text:
+            new_text = old_text.replace('\n\nПроверяют:', f'\n\n{status_line}\n{footer}')
+        else:
+            new_text = old_text + f'\n\n{status_line}\n{footer}'
             
         edit(new_text, {'inline': True, 'buttons': []})
         
@@ -90,7 +101,6 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
     # --- ЗАЯВКИ (ВЫБОР БЕСЕДЫ И РОЛИ) ---
     if cmd == 'app_chat_select':
         target_peer = payload.get('peer_id')
-        # Сохраняем выбранную беседу в steps
         upsert_application(user_id, 'await_role', -1, [str(target_peer)]) 
         from keyboards import application_role_select_keyboard
         edit('📋 Шаг 2: Выбери роль, на которую ты претендуешь:', application_role_select_keyboard(target_peer))
@@ -100,12 +110,10 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         target_peer = payload.get('peer_id')
         role = int(payload.get('role'))
         
-        # Защита: разрешаем только 2, 3 и 4 уровни
         if role not in (2, 3, 4):
             edit('❌ На эту роль нельзя подать заявку.')
             return
             
-        # Сохраняем в БД и переходим к вопросам
         upsert_application(user_id, 'in_progress', 0, [str(target_peer), str(role)])
         edit('Отлично! Теперь ответь на вопросы текстом.\n\n1️⃣ ' + QUESTIONS[0])
         return
@@ -167,7 +175,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
         except Exception as e: print(f'Error: {e}')
         return
 
-    # МЕНЮ (остальное как было)
+    # МЕНЮ
     if cmd == 'menu_main': edit('📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже.', menu_kb()); return
     if cmd == 'menu_basic': edit('📋 ОСНОВНЫЕ КОМАНДЫ\n\nлл профиль\nлл баланс\nлл ник <новый ник>\nлл активность\nлл задания\nлл дуэль @user\nлл передать @user <сумма>\nлл магазин\nлл дом <номер>\nлл машина <номер>\nлл телефон <номер>\nлл продать дом\nлл продать машину\nлл продать телефон', menu_kb()); return
     if cmd == 'menu_relationships': edit('❤️ КОМАНДЫ ОТНОШЕНИЙ\n\nлл начать отношения @user\nлл расстаться\nлл поцеловаться\nлл обняться\nлл семья [@user]\nлл создать брак @user <фамилия>\nлл развестись\nлл усыновить @user\nлл удочерить @user\nлл сдать в детдом @user\nлл уйти из семьи', menu_kb()); return

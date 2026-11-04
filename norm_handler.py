@@ -59,19 +59,19 @@ def generate_and_send_report(user_id, vk, photos):
     # Теги
     tags_stats = get_admin_tags_stats(user_id, week_start_str)
     
-    # 4. Формируем текст
+    # 4. Формируем текст (БЕЗ ЗВЕЗДОЧЕК)
     lines = [
-        f'**Отчёт от** {user_link}',
-        f'**Права:** {role_name}',
-        f'**Беседы:** {chats_str}',
+        f'Отчёт от {user_link}',
+        f'Права: {role_name}',
+        f'Беседы: {chats_str}',
         DIVIDER,
-        f'**Активность администратора**\nЗа неделю: {week_msgs}',
+        f'Активность администратора\nЗа неделю: {week_msgs}',
         DIVIDER,
-        f'**Количество сделанных all**\nЗа неделю: {tags_stats.get("all", 0)}',
+        f'Количество сделанных all\nЗа неделю: {tags_stats.get("all", 0)}',
         DIVIDER,
-        f'**Количество сделанных online**\nЗа неделю: {tags_stats.get("online", 0)}',
+        f'Количество сделанных online\nЗа неделю: {tags_stats.get("online", 0)}',
         DIVIDER,
-        f'**Количество добавленных человек**\nЗа неделю: {week_invites}',
+        f'Количество добавленных человек\nЗа неделю: {week_invites}',
         DIVIDER,
     ]
     
