@@ -1,4 +1,4 @@
-import sqlite3
+﻿import sqlite3
 import vk_api
 from config import TOKEN
 

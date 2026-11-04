@@ -1,4 +1,4 @@
-import random
+﻿import random
 from database import get_user, update_coins
 
 COINS_MULTIPLIERS = [

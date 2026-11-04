@@ -1,4 +1,4 @@
-import json, re
+﻿import json, re
 from datetime import datetime
 from config import CREATOR_ID, ALLOWED_IN_DM, MAIN_CHATS, ANARCHY_CHAT, CASINO_CHAT
 from database import (

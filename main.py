@@ -1,4 +1,4 @@
-import json, threading, time, re
+﻿import json, threading, time, re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import vk_api

@@ -1,4 +1,4 @@
-import vk_api
+﻿import vk_api
 from config import TOKEN
 
 vk = vk_api.VkApi(token=TOKEN).get_api()

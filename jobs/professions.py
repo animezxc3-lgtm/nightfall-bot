@@ -1,4 +1,4 @@
-PROFESSIONS = {
+﻿PROFESSIONS = {
     'шлюха': {
         'name': '🍆 Шлюха',
         'levels': [

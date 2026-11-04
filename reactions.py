@@ -1,4 +1,4 @@
-"""Lightweight character reactions for ordinary chat messages."""
+﻿"""Lightweight character reactions for ordinary chat messages."""
 
 import random
 import re

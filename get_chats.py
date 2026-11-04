@@ -1,4 +1,4 @@
-import os
+﻿import os
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from dotenv import load_dotenv

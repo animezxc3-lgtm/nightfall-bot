@@ -1,4 +1,4 @@
-import random, re
+﻿import random, re
 from config import RP_ALBUMS
 from database import get_random_rp_photo
 

@@ -1,4 +1,4 @@
-import json
+﻿import json
 
 def _btn(label, cmd, **extra):
     payload = {'cmd': cmd}

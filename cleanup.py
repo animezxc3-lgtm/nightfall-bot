@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+﻿from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from database import get_all_chats, get_chat_user_week_messages
 

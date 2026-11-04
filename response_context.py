@@ -1,4 +1,4 @@
-from contextvars import ContextVar
+﻿from contextvars import ContextVar
 CURRENT_USER_ID = ContextVar("current_user_id", default=None)
 EXCLUDE_ACTOR = ContextVar("exclude_actor", default=False)
 def set_user(user_id, exclude=False):

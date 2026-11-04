@@ -1,4 +1,4 @@
-from database import get_user, get_power_rank, get_warning_count, get_chat_join_date
+﻿from database import get_user, get_power_rank, get_warning_count, get_chat_join_date
 from relationships import get_display_name, get_partner_id, get_days_in_relationship
 from jobs.professions import PROFESSIONS, get_level_name
 from admin_commands import get_admin_level, get_display_admin_level, ROLE_NAMES

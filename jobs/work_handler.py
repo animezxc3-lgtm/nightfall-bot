@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from jobs.professions import PROFESSIONS, get_level_name, get_salary, get_max_level, PROMOTION_DAYS
 from database import (
     update_coins, update_power, update_job_field, get_user,

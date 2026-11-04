@@ -1,4 +1,4 @@
-from database import (
+﻿from database import (
     get_all_admin_week_stats, reset_admin_week_stats,
     get_global_role, get_admin_level_for_chat, db_cursor,
     get_user, update_gems, get_messages_stats,

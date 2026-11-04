@@ -1,4 +1,4 @@
-"""SQLite storage for VKBot."""
+﻿"""SQLite storage for VKBot."""
 
 from datetime import datetime, timedelta
 from contextlib import contextmanager

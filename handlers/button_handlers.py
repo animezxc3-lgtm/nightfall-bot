@@ -1,4 +1,4 @@
-import json
+﻿import json
 from keyboards import menu_keyboard, back_to_menu_keyboard, get_shop_menu, profession_keyboard, shop_items_keyboard, _btn
 from config import CREATOR_ID, MAIN_CHATS, EXTRA_CHATS, ALL_BOT_CHATS
 from admin_commands import get_admin_level

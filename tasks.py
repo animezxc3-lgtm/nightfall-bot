@@ -1,4 +1,4 @@
-"""Daily task system for Lelouch Bot.
+﻿"""Daily task system for Lelouch Bot.
 
 Ordinary tasks are tracked globally across chats. Administrative tasks are tracked
 inside the conversation where they were assigned. Tasks expire at midnight Moscow
