@@ -53,7 +53,13 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
 
     if cmd == 'app_role_select':
         target_peer = payload.get('peer_id')
-        role = payload.get('role')
+        role = int(payload.get('role'))
+        
+        # Защита: разрешаем только 2, 3 и 4 уровни
+        if role not in (2, 3, 4):
+            edit('❌ На эту роль нельзя подать заявку.')
+            return
+            
         # Сохраняем в БД и переходим к вопросам
         upsert_application(user_id, 'in_progress', 0, [str(target_peer), str(role)])
         edit('Отлично! Теперь ответь на вопросы текстом.\n\n1️⃣ ' + QUESTIONS[0])

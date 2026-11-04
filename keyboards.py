@@ -78,32 +78,66 @@ def application_review_keyboard(applicant_id):
         _btn('❌ Отклонить', 'app_decline', applicant=applicant_id),
     ]]}
 
-# --- Кнопки для заявок ---
+# --- Кнопки для заявок (ТОЛЬКО ОСНОВНЫЕ БЕСЕДЫ) ---
 def application_chat_select_keyboard():
-    from config import MAIN_CHATS, EXTRA_CHATS
+    from config import MAIN_CHATS
     buttons = []
-    # Основные
+    
+    # Только 6 основных бесед, по 2 в ряд для красоты
+    row = []
     for i, peer_id in enumerate(MAIN_CHATS, 1):
-        buttons.append([_btn(f'NightFall {i}', 'app_chat_select', peer_id=peer_id)])
-    buttons.append([_btn('NF || Anarchy', 'app_chat_select', peer_id=EXTRA_CHATS[0])])
-    buttons.append([_btn('NF || Casino', 'app_chat_select', peer_id=EXTRA_CHATS[1])])
+        row.append(_btn(f'NightFall {i}', 'app_chat_select', peer_id=peer_id))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+        
     return {'inline': True, 'buttons': buttons}
 
+# --- Кнопки для выбора роли (ТОЛЬКО АКТИВИСТ, РЕКРУТЕР, АДМИН) ---
 def application_role_select_keyboard(peer_id):
     from database import get_recruit_settings
     open_roles = get_recruit_settings(peer_id)
+    # Оставляем только Активиста (2), Рекрутера (3) и Администратора (4)
     roles = {
-        1: '🎓 Стажёр', 2: '⚡ Активист', 3: '🎯 Рекрутер', 4: '📱 Администратор', 5: '🌟 Куратор'
+        2: '⚡ Активист', 
+        3: '🎯 Рекрутер', 
+        4: '📱 Администратор'
     }
     buttons = []
     for level, name in roles.items():
         if level in open_roles:
             buttons.append([_btn(name, 'app_role_select', peer_id=peer_id, role=level)])
+            
     if not buttons:
         buttons.append([_btn('Набор закрыт', 'app_role_cancel')])
+        
     return {'inline': True, 'buttons': buttons}
 
-# --- Кнопки для настройки набора ---
+# --- Кнопки для настройки набора (ВСЕ БЕСЕДЫ) ---
+def settings_chats_keyboard():
+    from config import MAIN_CHATS, EXTRA_CHATS
+    buttons = []
+    
+    # Основные по 2 в ряд
+    row = []
+    for i, peer_id in enumerate(MAIN_CHATS, 1):
+        row.append(_btn(f'NightFall {i}', 'settings_open', peer_id=peer_id))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    
+    # Дополнительные
+    buttons.append([
+        _btn('NF || Anarchy', 'settings_open', peer_id=EXTRA_CHATS[0]),
+        _btn('NF || Casino', 'settings_open', peer_id=EXTRA_CHATS[1])
+    ])
+    
+    return {'inline': True, 'buttons': buttons}
+
 def recruit_settings_keyboard(peer_id):
     from database import get_recruit_settings
     open_roles = get_recruit_settings(peer_id)
@@ -115,13 +149,4 @@ def recruit_settings_keyboard(peer_id):
         status = '✅' if level in open_roles else '❌'
         buttons.append([_btn(f'{status} {name}', 'toggle_recruit', peer_id=peer_id, role=level)])
     buttons.append([_btn('⬅️ Назад', 'settings_menu')])
-    return {'inline': True, 'buttons': buttons}
-
-def settings_chats_keyboard():
-    from config import MAIN_CHATS, EXTRA_CHATS
-    buttons = []
-    for i, peer_id in enumerate(MAIN_CHATS, 1):
-        buttons.append([_btn(f'NightFall {i}', 'settings_open', peer_id=peer_id)])
-    buttons.append([_btn('NF || Anarchy', 'settings_open', peer_id=EXTRA_CHATS[0])])
-    buttons.append([_btn('NF || Casino', 'settings_open', peer_id=EXTRA_CHATS[1])])
     return {'inline': True, 'buttons': buttons}

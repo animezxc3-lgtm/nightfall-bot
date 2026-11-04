@@ -638,8 +638,7 @@ def is_in_admin_blacklist(user_id):
         return r is not None
 
 def _week_key_moscow():
-    from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo('Europe/Moscow'))
+    now = datetime.now()
     return (now.date() - timedelta(days=now.weekday())).isoformat()
 
 def add_admin_stat(user_id, field, amount=1):

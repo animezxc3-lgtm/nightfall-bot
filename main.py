@@ -1,6 +1,5 @@
 ﻿import json, threading, time, re
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from config import TOKEN, GROUP_ID, CREATOR_ID, ALLOWED_IN_DM, ALL_BOT_CHATS, MAIN_CHATS, EXTRA_CHATS
@@ -19,8 +18,6 @@ from applications import start_application, handle_dm_message, cancel_applicatio
 from pin_manager import update_all_pins
 from weekly_report import send_weekly_report
 from tasks import event as task_event, notify_task_rewards
-
-MOSCOW = ZoneInfo('Europe/Moscow')
 
 def _obj_get(obj, key, default=None):
     if isinstance(obj, dict): return obj.get(key, default)
@@ -112,11 +109,8 @@ for event in longpoll.listen():
             if uid and peer:
                 if uid == CREATOR_ID: set_global_role(uid, 7)
                 if get_chat_join_date(peer, uid) is None: record_chat_join(peer, uid)
-                # Приветствие только если это доп. беседа
-                if peer in EXTRA_CHATS:
-                    send_welcome(peer, uid)
-                elif peer in MAIN_CHATS:
-                    send_welcome(peer, uid) # В основных тоже можно оставить
+                if peer in EXTRA_CHATS: send_welcome(peer, uid)
+                elif peer in MAIN_CHATS: send_welcome(peer, uid)
             continue
 
         # --- СООБЩЕНИЯ ---
@@ -131,8 +125,7 @@ for event in longpoll.listen():
         if uid <= 0: continue
 
         # ФИЛЬТР БЕСЕД: Бот работает только в разрешенных
-        if is_chat and peer not in ALL_BOT_CHATS:
-            continue
+        if is_chat and peer not in ALL_BOT_CHATS: continue
 
         action = m.get('action') or {}
         action_type = action.get('type') if isinstance(action, dict) else None
@@ -141,22 +134,17 @@ for event in longpoll.listen():
         # --- ВЫХОД ИЗ БЕСЕДЫ ---
         if is_chat and action_type == 'chat_kick_user' and member_id:
             if member_id == uid:
-                # Проверяем, админ ли он где-либо
                 g_level, l_roles = get_user_admin_rights(member_id)
                 is_any_admin = (g_level > 0) or any(lvl > 0 for _, lvl in l_roles)
-                
-                if is_any_admin or is_twink(member_id):
-                    continue # Админов и твинков не кикаем
-                
-                try:
-                    vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=member_id)
+                if is_any_admin or is_twink(member_id): continue
+                try: vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=member_id)
                 except Exception: pass
                 try: vk.messages.send(peer_id=peer, random_id=0, message='Империи нужны воистину верные люди.', disable_mentions=True)
                 except Exception: pass
                 continue
             continue
 
-        # --- ВХОД В БЕСЕДУ (по ссылке или приглашению) ---
+        # --- ВХОД В БЕСЕДУ ---
         invited_uid = action.get('member_id') if isinstance(action, dict) else None
         if is_chat and action_type in ('chat_invite_user', 'chat_invite_user_by_link') and invited_uid:
             if not user_exists(invited_uid):
@@ -167,7 +155,6 @@ for event in longpoll.listen():
             ensure_chat(peer)
             record_chat_join(peer, invited_uid, invited_by=uid)
             
-            # ЛОГИКА ДЛЯ ДОП. БЕСЕД: Если чела нет в основных — кикаем
             if peer in EXTRA_CHATS:
                 in_main = False
                 for mc in MAIN_CHATS:
@@ -182,7 +169,6 @@ for event in longpoll.listen():
                     except Exception: pass
                     continue
             else:
-                # Приветствие в основных и админских
                 send_welcome(peer, invited_uid)
             
             try:
@@ -247,7 +233,7 @@ for event in longpoll.listen():
                                     from database import upsert_application
                                     upsert_application(uid, 'await_status', 0, [])
                                 elif n == 3:
-                                    clear_warnings(uid, None) # Или в каком чате? Пусть глобально
+                                    clear_warnings(uid, None) 
                                     vk.messages.send(peer_id=uid, random_id=0, message='Предупреждение снято.', disable_mentions=True)
                                 elif n == 4:
                                     new_mult = increase_salary_multiplier(uid, 0.5, 7.0)
@@ -272,7 +258,6 @@ for event in longpoll.listen():
         except Exception as e: print(f'⚠️ Задания: {e}')
         claim_power_for_messages(uid)
         
-        # Мут
         if get_feature(peer, 'мут') and get_admin_level(uid, peer) == 0:
             try: vk.messages.delete(peer_id=peer, conversation_message_ids=m.get('conversation_message_id'), delete_for_all=True)
             except Exception: pass
