@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
-from config import TOKEN, GROUP_ID, CREATOR_ID, ALLOWED_IN_DM, ALL_BOT_CHATS, MAIN_CHATS, EXTRA_CHATS
+from config import TOKEN, GROUP_ID, CREATOR_ID, ALLOWED_IN_DM, ALL_BOT_CHATS, MAIN_CHATS, EXTRA_CHATS, APPLICATIONS_PEER_ID
 from database import (
     migrate_database, user_exists, create_user, set_admin_level, set_global_role, ensure_chat,
     add_message_count, claim_power_for_messages, get_feature, record_chat_join,
@@ -235,9 +235,13 @@ for event in longpoll.listen():
                                 elif n == 3:
                                     clear_warnings(uid, None) 
                                     vk.messages.send(peer_id=uid, random_id=0, message='Предупреждение снято.', disable_mentions=True)
+                                    try: vk.messages.send(peer_id=APPLICATIONS_PEER_ID, random_id=0, message=f'💎 VIP-ЛОГ\nПользователь: [id{uid}|{uid}]\nКупил(а): Снятие предупреждения', disable_mentions=True)
+                                    except: pass
                                 elif n == 4:
                                     new_mult = increase_salary_multiplier(uid, 0.5, 7.0)
                                     vk.messages.send(peer_id=uid, random_id=0, message=f'Множитель зарплаты повышен до ×{new_mult}.', disable_mentions=True)
+                                    try: vk.messages.send(peer_id=APPLICATIONS_PEER_ID, random_id=0, message=f'💎 VIP-ЛОГ\nПользователь: [id{uid}|{uid}]\nКупил(а): Повышение множителя зарплаты (текущий ×{new_mult})', disable_mentions=True)
+                                    except: pass
                     continue
                 if command == 'настроить набор':
                     if uid != CREATOR_ID: continue

@@ -22,7 +22,7 @@ from database import (
 from pin_manager import refresh_after_admin_change
 from cleanup import run_manual_cleanup
 
-# Иерархия по уровням (1-7) - ЗК заменен на Админа
+# Иерархия по уровням (1-7)
 ROLE_NAMES = {
     1: 'Стажёр',
     2: 'Активист',
@@ -53,6 +53,18 @@ COMMAND_MIN_LEVEL = {
     'выдать права': 5, 'аватар': 4, 'обновить рп': 5,
     'чистка': 5, 'настроить набор': 7
 }
+
+def log_to_control(vk, text):
+    """Отправляет лог в беседу Контроля."""
+    try:
+        vk.messages.send(
+            peer_id=CONTROL_CHAT,
+            random_id=0,
+            message=text,
+            disable_mentions=True
+        )
+    except Exception as e:
+        print(f"⚠️ Не удалось отправить лог в Контроль: {e}")
 
 def _has_number_in_title(title):
     if not title: return False
@@ -231,16 +243,9 @@ def _build_check(vk, target, peer_id):
     return '\n'.join(lines)
 
 def _parse_welcome_photo_input(raw_text):
-    """Парсит ID фото или ссылку на фото для приветствия."""
     value = (raw_text or '').strip()
-    attachment_re = re.compile(
-        r'(?<![A-Za-z0-9])photo(-?\d+)_(-?\d+)(?:_([A-Za-z0-9]+))?(?![A-Za-z0-9])',
-        re.IGNORECASE,
-    )
-    url_re = re.compile(
-        r'https?://[^\s]*?photo(-?\d+)_(-?\d+)(?:_([A-Za-z0-9]+))?[^\s]*',
-        re.IGNORECASE,
-    )
+    attachment_re = re.compile(r'(?<![A-Za-z0-9])photo(-?\d+)_(-?\d+)(?:_([A-Za-z0-9]+))?(?![A-Za-z0-9])', re.IGNORECASE)
+    url_re = re.compile(r'https?://[^\s]*?photo(-?\d+)_(-?\d+)(?:_([A-Za-z0-9]+))?[^\s]*', re.IGNORECASE)
     url_match = url_re.search(value)
     if url_match:
         owner_id, photo_id, access_key = url_match.groups()
@@ -249,7 +254,6 @@ def _parse_welcome_photo_input(raw_text):
         message = (value[:url_match.start()] + ' ' + value[url_match.end():]).strip()
         message = re.sub(r'\s+', ' ', message)
         return message, attachment
-
     match = attachment_re.search(value)
     if match:
         owner_id, photo_id, access_key = match.groups()
@@ -258,13 +262,11 @@ def _parse_welcome_photo_input(raw_text):
         message = (value[:match.start()] + ' ' + value[match.end():]).strip()
         message = re.sub(r'\s+', ' ', message)
         return message, attachment
-
     match = re.match(r'^([0-9]+)(?:\s+|$)(.*)$', value, re.DOTALL)
     if match:
         photo_id, message = match.group(1), match.group(2).strip()
         owner_id = int(PROFILE_WELCOME_ALBUM_OWNER)
         return message, f'photo{owner_id}_{int(photo_id)}'
-
     return value, ''
 
 def _sync_rp_photos():
@@ -352,8 +354,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             return True
         try:
             amount = int(rest)
-            if not (30 <= amount <= 80):
-                raise ValueError
+            if not (30 <= amount <= 80): raise ValueError
         except ValueError:
             _send(vk, peer_id, 'Укажи число сообщений от 30 до 80. Пример: `лл чистка 50`', actor_inline=False)
             return True
@@ -364,6 +365,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             
         res = run_manual_cleanup(vk, peer_id, amount, CREATOR_ID, get_admin_level)
         _send(vk, peer_id, res, actor_inline=False)
+        log_to_control(vk, f'🧹 Чистка\nБеседа: {peer_id}\nАдмин: [id{user_id}|{user_id}]\nРезультат: {res}')
         return True
 
     if key in {'пред', 'анпред', 'фулл анпред', 'кик', 'фулл кик', 'бан', 'разбан', 'проверить'}:
@@ -386,39 +388,44 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 add_kick_event(target, peer_id, user_id)
                 try: vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
                 except Exception: pass
-                annul_warnings(target, peer_id) # АННУЛИРУЕМ ПРЕДЫ
+                annul_warnings(target, peer_id)
                 _send(vk, peer_id, f'выдал предупреждение {_user_link(vk, target)}. Теперь у него 3/3. {_user_link(vk, target)} исключён, предупреждения аннулированы.')
+                log_to_control(vk, f'⚠️ Предупреждение 3/3 (Кик)\nБеседа: {peer_id}\nАдмин: [id{user_id}|{user_id}]\nНарушитель: [id{target}|{target}]')
             else:
                 _send(vk, peer_id, f'выдал предупреждение {_user_link(vk, target)}. Теперь у него {n}/3.')
+                log_to_control(vk, f'⚠️ Предупреждение {n}/3\nБеседа: {peer_id}\nАдмин: [id{user_id}|{user_id}]\nНарушитель: [id{target}|{target}]')
             return True
 
         if key == 'анпред':
             _ensure_profile(vk, target)
             left = remove_warning(target, peer_id, True)
             _send(vk, peer_id, f'снял пред у {_user_link(vk, target)}. У него стало {left}/3.')
+            log_to_control(vk, f'✅ Снятие преда\nБеседа: {peer_id}\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}] (осталось {left}/3)')
             return True
 
         if key == 'фулл анпред':
             _ensure_profile(vk, target)
             clear_warnings(target, peer_id, True)
             _send(vk, peer_id, f'снял все предупреждения у {_user_link(vk, target)}.')
+            log_to_control(vk, f'✅ Снятие всех предов\nБеседа: {peer_id}\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
             return True
 
         if key == 'бан':
             _ensure_profile(vk, target)
             ban_user(target)
             add_kick_event(target, peer_id, user_id)
-            # Кикаем отовсюду
             for cp, _ in get_all_chats():
                 try: vk.messages.removeChatUser(chat_id=cp - 2000000000, user_id=target)
                 except Exception: pass
             _send(vk, peer_id, 'Пользователь забанен и исключён из всех бесед.')
+            log_to_control(vk, f'⛔ Бан\nБеседа: {peer_id}\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
             return True
 
         if key == 'разбан':
             _ensure_profile(vk, target)
             unban_user(target)
             _send(vk, peer_id, f'разбанил {_user_link(vk, target)}.')
+            log_to_control(vk, f'✅ Разбан\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
             return True
 
         if key == 'кик':
@@ -427,6 +434,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             try:
                 vk.messages.removeChatUser(chat_id=peer_id - 2000000000, user_id=target)
                 _send(vk, peer_id, f'исключил {_user_link(vk, target)} из беседы.')
+                log_to_control(vk, f'👢 Кик\nБеседа: {peer_id}\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
             except Exception as e: print(f'⚠️ {e}')
             return True
 
@@ -448,6 +456,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 kicked += 1
             except Exception: pass
             _send(vk, peer_id, f'исключил {_user_link(vk, target)} из {kicked} бесед.')
+            log_to_control(vk, f'👢 Фулл-кик ({kicked} бесед)\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
             return True
 
         if key == 'снять':
@@ -458,6 +467,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 set_global_role(target, 0)
                 _send(vk, peer_id, f'снял глобальную роль с {_user_link(vk, target)}.')
                 _refresh_all_pins(vk)
+                log_to_control(vk, f'📉 Снятие глобальной роли\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
                 return True
             with db_cursor() as (_, c):
                 c.execute("SELECT peer_id FROM admin_chat_rights WHERE user_id=? AND level>0", (target,))
@@ -471,6 +481,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 removed.append(rp)
             _send(vk, peer_id, f'снял права с {_user_link(vk, target)} в {len(removed)} беседах.')
             for rp in removed: _refresh_pin(vk, rp)
+            log_to_control(vk, f'📉 Снятие локальных ролей\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]\nБесед: {len(removed)}')
             return True
 
     if key == 'админ стат':
@@ -550,13 +561,13 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             set_global_role(target, level)
             _send(vk, peer_id, f'Назначена глобальная роль «{ROLE_NAMES[level]}» для {_user_link(vk, target)}.', actor_inline=False)
             _refresh_all_pins(vk)
+            log_to_control(vk, f'👑 Выдача глобальной роли\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]\nРоль: {ROLE_NAMES[level]}')
             return True
 
         if level >= actor_level:
             _send(vk, peer_id, 'Нельзя выдавать роль равную или выше собственной.', actor_inline=False)
             return True
 
-        # Ищем беседу по названию или номеру
         target_peer = None
         if 'анархия' in cleaned.lower(): target_peer = ANARCHY_CHAT
         elif 'казино' in cleaned.lower(): target_peer = CASINO_CHAT
@@ -583,6 +594,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         set_admin_level(target_peer, target, level, ROLE_NAMES[level])
         _send(vk, peer_id, f'Назначена роль «{ROLE_NAMES[level]}» для {_user_link(vk, target)}.', actor_inline=False)
         _refresh_pin(vk, target_peer)
+        log_to_control(vk, f'📈 Выдача локальной роли\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]\nРоль: {ROLE_NAMES[level]}\nБеседа: {target_peer}')
         return True
 
     if key == 'снять':
@@ -604,6 +616,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             set_admin_level(target_peer, target, 0, 'Участник')
         _send(vk, peer_id, f'Сняты локальные права с {_user_link(vk, target)}.', actor_inline=False)
         for target_peer, in rows: _refresh_pin(vk, target_peer)
+        log_to_control(vk, f'📉 Снятие локальных ролей (вручную)\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
         return True
 
     if key == 'чс адм':
@@ -612,6 +625,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         _ensure_profile(vk, target)
         add_to_admin_blacklist(target, user_id)
         _send(vk, peer_id, f'занёс {_user_link(vk, target)} в ЧС Администрации.')
+        log_to_control(vk, f'🚫 Добавление в ЧС Адм\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
         return True
 
     if key == 'убрать чс адм':
@@ -622,6 +636,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             return True
         remove_from_admin_blacklist(target)
         _send(vk, peer_id, f'убрал {_user_link(vk, target)} из ЧС Администрации.')
+        log_to_control(vk, f'✅ Удаление из ЧС Адм\nАдмин: [id{user_id}|{user_id}]\nПользователь: [id{target}|{target}]')
         return True
 
     if key == 'аватар':
@@ -660,7 +675,6 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         if not rest:
             _send(vk, peer_id, 'Укажи сообщение.', actor_inline=False)
             return True
-        # Рассылка идет только в основные беседы
         ok = bad = 0
         for cp in MAIN_CHATS:
             try:
@@ -668,6 +682,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
                 ok += 1
             except Exception: bad += 1
         _send(vk, peer_id, f'📢 Доставлено в основные беседы: {ok}, ошибок: {bad}.', actor_inline=False)
+        log_to_control(vk, f'📢 Рассылка\nАдмин: [id{user_id}|{user_id}]\nТекст: {rest[:50]}...\nДоставлено: {ok}')
         return True
 
     if key.startswith('переключить '):
