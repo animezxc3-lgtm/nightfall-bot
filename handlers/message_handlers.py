@@ -1,5 +1,5 @@
 ﻿import json, re
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import CREATOR_ID, ALLOWED_IN_DM, MAIN_CHATS, ANARCHY_CHAT, CASINO_CHAT
 from database import (
     get_user, create_user, user_exists, transfer_coins, debit_gems, 
@@ -9,7 +9,8 @@ from database import (
     upsert_application, set_gif_link, set_status, 
     get_property_value, db_cursor, set_salary_multiplier, 
     increase_salary_multiplier, get_salary_multiplier, 
-    add_admin_stat, has_active_duel, create_duel, get_duel_for_opponent, delete_duel
+    add_admin_stat, has_active_duel, create_duel, get_duel_for_opponent, delete_duel,
+    get_messages_stats, get_admin_chat_stats
 )
 from admin_commands import handle_admin_command, get_admin_level, get_display_admin_level
 from games import casino
@@ -88,7 +89,7 @@ def handle_command(command, user_id, peer_id, vk, text):
     command = raw_command.lower()
     if not command: return
     
-    list_commands = {'меню', 'магазин', 'беседы', 'админы', 'банстат', 'твинки', 'задание', 'задания'}
+    list_commands = {'меню', 'магазин', 'беседы', 'админы', 'твинки'}
     set_user(user_id, command.split()[0] in list_commands)
     is_chat = peer_id > 2000000000
     if not is_chat: return
@@ -148,14 +149,14 @@ def handle_command(command, user_id, peer_id, vk, text):
         rest = command[len('баланс'):].strip() if command != 'баланс' else ''
         target = _target(rest) if rest else user_id
         if not target or not get_user(target): return
-        # Новый текст
         msg = f'Баланс {_user_link(vk, target)}:\n' + get_balance(target, vk).split('\n', 1)[1]
         _send(vk, peer_id, msg, exclude_actor=True)
         if target == user_id: _record_task_event(vk, peer_id, user_id, 'balance')
         return
 
-    if command == 'задание': _send(vk, peer_id, format_assigned_task(user_id, peer_id), exclude_actor=True); return
-    if command == 'задания': _send(vk, peer_id, format_tasks(user_id, peer_id), exclude_actor=True); return
+    # ЗАДАНИЯ ОТКЛЮЧЕНЫ
+    # if command == 'задание': _send(vk, peer_id, format_assigned_task(user_id, peer_id), exclude_actor=True); return
+    # if command == 'задания': _send(vk, peer_id, format_tasks(user_id, peer_id), exclude_actor=True); return
 
     if command.startswith('ник '):
         nick = raw_command[4:].strip()
@@ -168,7 +169,6 @@ def handle_command(command, user_id, peer_id, vk, text):
         rest = command[len('активность'):].strip() if command != 'активность' else ''
         target = _target(rest) if rest else user_id
         if not target or not get_user(target): return
-        # Новый текст
         msg = f'Статистика сообщений {_user_link(vk, target)}:\n' + get_activity(target).split('\n', 1)[1]
         _send(vk, peer_id, msg)
         if target == user_id: _record_task_event(vk, peer_id, user_id, 'activity')
@@ -178,7 +178,7 @@ def handle_command(command, user_id, peer_id, vk, text):
         handle_norma(command, user_id, peer_id, vk)
         return
 
-    # ─── ТВИНКИ ─────────────────────────────────────────
+    # ─── ТВИНКИ (СО СТАТИСТИКОЙ) ──────────────────────────
     if command == 'твинк' or command.startswith('твинк '):
         parts = command.split(maxsplit=2)
         if len(parts) >= 2 and parts[1] == 'убрать':
@@ -188,12 +188,16 @@ def handle_command(command, user_id, peer_id, vk, text):
             owner = get_owner(target)
             actor_level = get_admin_level(user_id, peer_id)
             if user_id != owner and actor_level < 5: return
-            remove_twink(target); return
+            remove_twink(target)
+            _send(vk, peer_id, 'Твинк удален.', exclude_actor=True)
+            return
         if len(parts) < 2: return
         twink_id = _target(parts[1])
         if not twink_id or twink_id == user_id or not get_user(twink_id): return
         if is_twink(twink_id): return
-        add_twink(user_id, twink_id); return
+        add_twink(user_id, twink_id)
+        _send(vk, peer_id, 'Твинк добавлен.', exclude_actor=True)
+        return
 
     if command == 'твинки' or command.startswith('твинки '):
         parts = command.split(maxsplit=1)
@@ -201,10 +205,38 @@ def handle_command(command, user_id, peer_id, vk, text):
         if not target: return
         owner = get_owner(target) or target
         twinks = get_twinks(owner)
+        
         header = f'👥 Твинки {_user_link(vk, owner)}:'
-        if not twinks: _send(vk, peer_id, header + '\n-нет', exclude_actor=True); return
-        lines = [header] + [f'- [id{tid}|Пользователь]' for tid in twinks]
-        _send(vk, peer_id, '\n'.join(lines), exclude_actor=True); return
+        if not twinks: 
+            _send(vk, peer_id, header + '\n-нет', exclude_actor=True)
+            return
+            
+        lines = [header]
+        for tid in twinks:
+            # Статистика сообщений
+            msg_stats = get_messages_stats(tid)
+            
+            # Статистика приглашений (за все время, за день, за неделю, за месяц)
+            with db_cursor() as (_, c):
+                today = datetime.now().strftime("%Y-%m-%d")
+                week = (datetime.now() - timedelta(days=datetime.now().weekday())).strftime("%Y-%m-%d")
+                month = datetime.now().replace(day=1).strftime("%Y-%m-%d")
+                
+                inv_total = c.execute("SELECT COUNT(*) FROM chat_members WHERE invited_by=?", (tid,)).fetchone()[0]
+                inv_today = c.execute("SELECT COUNT(*) FROM chat_members WHERE invited_by=? AND substr(first_join_at,1,10)=?", (tid, today)).fetchone()[0]
+                inv_week = c.execute("SELECT COUNT(*) FROM chat_members WHERE invited_by=? AND substr(first_join_at,1,10)>=?", (tid, week)).fetchone()[0]
+                inv_month = c.execute("SELECT COUNT(*) FROM chat_members WHERE invited_by=? AND substr(first_join_at,1,10)>=?", (tid, month)).fetchone()[0]
+
+            lines.append(f'• {_user_link(vk, tid)}')
+            lines.append(f'  💬 Сообщения:')
+            lines.append(f'    Сегодня: {msg_stats["today"]} | За неделю: {msg_stats["week"]} | За месяц: {msg_stats["month"]} | Всего: {msg_stats["total"]}')
+            lines.append(f'  👥 Приглашено:')
+            lines.append(f'    Сегодня: {inv_today} | За неделю: {inv_week} | За месяц: {inv_month} | Всего: {inv_total}')
+            lines.append('')
+            
+        if lines[-1] == '': lines.pop()
+        _send(vk, peer_id, '\n'.join(lines), exclude_actor=True)
+        return
 
     # ─── ЗАЯВКА ─────────────────────────────────────────
     if command == 'заявка':
@@ -226,7 +258,6 @@ def handle_command(command, user_id, peer_id, vk, text):
 
     # ─── ДУЭЛЬ ──────────────────────────────────────────
     if command.startswith('дуэль'):
-        # Дуэли 24/7 только в Анархии. В остальных - только в выходные.
         is_weekend = datetime.now().weekday() >= 5
         if peer_id != ANARCHY_CHAT and not is_weekend:
             _send(vk, peer_id, 'Дуэли в этой беседе проводятся только в субботу и воскресенье.', exclude_actor=True)
@@ -492,7 +523,7 @@ def handle_norma(command, user_id, peer_id, vk):
     if not target or target == user_id: return
 
     actor_level = get_admin_level(user_id, peer_id)
-    if actor_level < 2: # Админ, Рекрутер, Активист (уровень 2 и выше)
+    if actor_level < 2:
         _send(vk, peer_id, 'Недостаточно прав. Норма доступна Активисту и выше.', exclude_actor=True)
         return
     if not get_user(target): return

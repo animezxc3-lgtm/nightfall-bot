@@ -44,7 +44,7 @@ ROLE_WORDS = {
 }
 
 COMMAND_MIN_LEVEL = {
-    'пред': 2, 'анпред': 5, 'фулл анпред': 5, 'кик': 2, 'фулл кик': 5, 'бан': 5, 'разбан': 5, 'банстат': 3,
+    'пред': 2, 'анпред': 5, 'фулл анпред': 5, 'кик': 2, 'фулл кик': 5, 'бан': 5, 'разбан': 5,
     'админы': 1, 'проверить': 2, 'снять': 6, 'изменить приветствие': 5, 'рассылка': 6, 'приветствие': 5,
     'чс адм': 6, 'убрать чс адм': 6,
     'беседа': 1, 'беседы': 1, 'админ стат': 1,
@@ -465,44 +465,80 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             return True
 
     if key == 'админ стат':
-        stats = get_admin_chat_stats(peer_id, user_id)
-        msg, inv = stats['messages'], stats['invites']
-        lines = ['📊 Статистика администратора', '', '👥 Приглашённые участники:',
-            f'Сегодня: {inv["today"]}', f'За неделю: {inv["week"]}', f'За месяц: {inv["month"]}', f'За всё время: {inv["total"]}', '',
-            '💬 Сообщения:', f'Сегодня: {msg["today"]}', f'За неделю: {msg["week"]}', f'За месяц: {msg["month"]}', f'За всё время: {msg["total"]}'
-        ]
-        _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
-        return True
+        target = extract_user_id(rest)
+        if not target:
+            target = user_id # Если никого не указали, показываем свою стату
+            
+        if not get_user(target):
+            _send(vk, peer_id, 'Пользователь не найден.', actor_inline=False)
+            return True
 
-    if key == 'банстат':
-        rows = get_banned_users()
-        _send(vk, peer_id, '🔒 В бане никого нет.' if not rows else '\n'.join(['🔒 Пользователи в бане:'] + [f'{i}. {n or "Пользователь"} — https://vk.com/id{u}' for i, (u, n) in enumerate(rows, 1)]), actor_inline=False)
+        stats = get_admin_chat_stats(peer_id, target)
+        msg, inv = stats['messages'], stats['invites']
+        
+        # Проверяем, есть ли у таргета админка (чтобы понять, писать ли "Администратора" или просто "Пользователя")
+        target_level = get_display_admin_level(target)
+        title = 'администратора' if target_level >= 1 else 'пользователя'
+        
+        lines = [f'📊 Статистика {title} {_user_link(vk, target)}', '']
+        lines.extend([
+            '👥 Приглашённые участники:',
+            f'Сегодня: {inv["today"]}',
+            f'За неделю: {inv["week"]}',
+            f'За месяц: {inv["month"]}',
+            f'За всё время: {inv["total"]}', '',
+            '💬 Сообщения (в этой беседе):',
+            f'Сегодня: {msg["today"]}',
+            f'За неделю: {msg["week"]}',
+            f'За месяц: {msg["month"]}',
+            f'За всё время: {msg["total"]}'
+        ])
+        
+        _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
         return True
 
     if key == 'админы':
-        grouped = {level: [] for level in range(1, 8)}
-        seen = set()
+        grouped = {level: set() for level in range(1, 8)}
+        
+        # Собираем глобальные роли
         try:
             for uid, level in get_all_global_roles():
-                level, uid = int(level), int(uid)
-                if level in (6, 7) and uid not in seen:
-                    grouped[level].append(uid); seen.add(uid)
+                grouped[int(level)].add(int(uid))
         except Exception as e: print(f'⚠️ {e}')
-        if CREATOR_ID not in seen:
-            grouped[7].append(CREATOR_ID); seen.add(CREATOR_ID)
-        try:
-            for uid, level in get_admins_for_chat(peer_id):
-                uid, level = int(uid), int(level)
-                if level in (1, 2, 3, 4, 5) and uid not in seen:
-                    grouped[level].append(uid); seen.add(uid)
-        except Exception as e: print(f'⚠️ {e}')
-        lines = ['👑 Администрация беседы:', '']
+            
+        if CREATOR_ID not in grouped[7]:
+            grouped[7].add(CREATOR_ID)
+            
+        # Локальные роли из ВСЕХ бесед
+        with db_cursor() as (_, c):
+            rows = c.execute("SELECT user_id, level FROM admin_chat_rights WHERE level > 0").fetchall()
+            for uid, level in rows:
+                if level in (1, 2, 3, 4, 5):
+                    grouped[int(level)].add(int(uid))
+                    
+        lines = ['👑 Администрация проекта:', '']
+        # Используем смайлики для красоты (как в закрепе)
+        role_emojis = {7: '👑', 6: '⚖', 5: '🌟', 4: '📱', 3: '🎯', 2: '⚡', 1: '🎓'}
+        
         for level in (7, 6, 5, 4, 3, 2, 1):
-            lines.append(f'{ROLE_NAMES[level]}:')
-            if grouped[level]: lines.extend(f'• {_user_link(vk, uid)}' for uid in grouped[level])
-            else: lines.append('• Нет')
-            lines.append('')
-        _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
+            if not grouped[level]:
+                continue
+                
+            emoji = role_emojis.get(level, '👤')
+            lines.append(f'{emoji} {ROLE_NAMES[level]}:')
+            for uid in grouped[level]:
+                lines.append(f'• {_user_link(vk, uid)}')
+            
+            lines.append('_' * 31) # Разделитель
+            lines.append('') # Пустая строка для отступа
+            
+        if len(lines) == 2:
+            _send(vk, peer_id, 'Администраторов не найдено.', actor_inline=False)
+        else:
+            if lines[-2] == '_' * 31:
+                lines.pop(-2) # Удаляем последний разделитель
+                lines.pop(-1) # Удаляем последнюю пустую строку
+            _send(vk, peer_id, '\n'.join(lines), actor_inline=False)
         return True
 
     if key == 'выдать права':
