@@ -44,25 +44,17 @@ ROLE_WORDS = {
 }
 
 COMMAND_MIN_LEVEL = {
-    'пред': 2, 'анпред': 3, 'фулл анпред': 3, 'кик': 2, 'фулл кик': 2, 'бан': 3, 'разбан': 3, 'банстат': 3,
-    'админы': 1, 'проверить': 2, 'снять': 5, 'изменить приветствие': 4, 'рассылка': 5, 'приветствие': 4,
-    'переключить мут': 5, 'переключить чистку': 5, 'переключить казино': 5, 'переключить дуэль': 5,
-    'переключить рассылку': 5,
-    'чс адм': 5, 'убрать чс адм': 5,
+    'пред': 2, 'анпред': 5, 'фулл анпред': 5, 'кик': 2, 'фулл кик': 5, 'бан': 5, 'разбан': 5, 'банстат': 3,
+    'админы': 1, 'проверить': 2, 'снять': 6, 'изменить приветствие': 5, 'рассылка': 6, 'приветствие': 5,
+    'чс адм': 6, 'убрать чс адм': 6,
     'беседа': 1, 'беседы': 1, 'админ стат': 1,
-    'выдать права': 5, 'аватар': 4, 'обновить рп': 5,
-    'чистка': 5, 'настроить набор': 7
+    'выдать права': 6, 'аватар': 2, 'обновить рп': 6,
+    'чистка': 5, 'настроить набор': 6
 }
 
 def log_to_control(vk, text):
-    """Отправляет лог в беседу Контроля."""
     try:
-        vk.messages.send(
-            peer_id=CONTROL_CHAT,
-            random_id=0,
-            message=text,
-            disable_mentions=True
-        )
+        vk.messages.send(peer_id=CONTROL_CHAT, random_id=0, message=text, disable_mentions=True)
     except Exception as e:
         print(f"⚠️ Не удалось отправить лог в Контроль: {e}")
 
@@ -76,8 +68,7 @@ def get_display_admin_level(user_id):
         global_level, local_roles = get_user_admin_rights(int(user_id))
         if global_level in (6, 7): return int(global_level)
         return max((int(level) for _, level in local_roles if 1 <= int(level) <= 5), default=0)
-    except Exception:
-        return 0
+    except Exception: return 0
 
 def get_admin_level(user_id, peer_id=None):
     if user_id == CREATOR_ID: return 7
@@ -270,27 +261,22 @@ def _parse_welcome_photo_input(raw_text):
     return value, ''
 
 def _sync_rp_photos():
-    if not RP_PHOTO_TOKEN:
-        return '❌ Не настроен RP_PHOTO_TOKEN. Добавь его в .env.'
+    if not RP_PHOTO_TOKEN: return '❌ Не настроен RP_PHOTO_TOKEN.'
     try:
         import vk_api
         photo_vk = vk_api.VkApi(token=RP_PHOTO_TOKEN).get_api()
-    except Exception as e: return f'❌ Не удалось создать сессию: {e}'
-
-    lines = ['📷 Результат синхронизации RP-альбомов:']
+    except Exception as e: return f'❌ {e}'
+    lines = ['📷 Синхронизация:']
     total = 0
     for command_name, album_id in RP_ALBUMS.items():
-        collected = []
-        offset = 0
+        collected, offset = [], 0
         try:
             while True:
                 response = photo_vk.photos.get(owner_id=-abs(int(GROUP_ID)), album_id=int(album_id), count=1000, offset=offset)
                 items = response.get('items') or []
                 for photo in items:
-                    photo_id = photo.get('id')
-                    owner_id = photo.get('owner_id', -abs(int(GROUP_ID)))
-                    if photo_id is not None:
-                        collected.append((f'photo{int(owner_id)}_{int(photo_id)}', int(photo_id), int(owner_id)))
+                    pid, oid = photo.get('id'), photo.get('owner_id', -abs(int(GROUP_ID)))
+                    if pid is not None: collected.append((f'photo{int(oid)}_{int(pid)}', int(pid), int(oid)))
                 if len(items) < 1000: break
                 offset += len(items)
             replace_rp_photos(command_name, collected)
@@ -299,8 +285,8 @@ def _sync_rp_photos():
             lines.append(f'• {command_name}: {count}')
         except Exception as e:
             lines.append(f'• {command_name}: ошибка')
-            print(f'❌ RP album sync [{command_name}]: {e}')
-    lines.append(f'\nВсего в кэше: {total} фотографий.')
+            print(f'❌ {e}')
+    lines.append(f'\nВсего: {total}')
     return '\n'.join(lines)
 
 def repair_legacy_local_role_peer_ids(vk):
@@ -324,14 +310,13 @@ def repair_legacy_local_role_peer_ids(vk):
             moved += 1
         return moved
     except Exception as exc:
-        print(f'[RIGHTS][MIGRATION] Ошибка: {exc}')
+        print(f'[RIGHTS][MIGRATION] {exc}')
         return 0
 
 def handle_admin_command(command, user_id, peer_id, vk, text):
     keys = sorted(COMMAND_MIN_LEVEL, key=len, reverse=True)
     key = next((k for k in keys if command == k or command.startswith(k + ' ')), None)
     if not key: return False
-    
     if not _require(key, user_id, peer_id, vk): return True
     
     rest = command[len(key):].strip()
@@ -358,11 +343,9 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         except ValueError:
             _send(vk, peer_id, 'Укажи число сообщений от 30 до 80. Пример: `лл чистка 50`', actor_inline=False)
             return True
-            
         if peer_id not in MAIN_CHATS:
             _send(vk, peer_id, 'Чистка доступна только в основных беседах.', actor_inline=False)
             return True
-            
         res = run_manual_cleanup(vk, peer_id, amount, CREATOR_ID, get_admin_level)
         _send(vk, peer_id, res, actor_inline=False)
         log_to_control(vk, f'🧹 Чистка\nБеседа: {peer_id}\nАдмин: [id{user_id}|{user_id}]\nРезультат: {res}')
@@ -371,12 +354,10 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
     if key in {'пред', 'анпред', 'фулл анпред', 'кик', 'фулл кик', 'бан', 'разбан', 'проверить'}:
         target = extract_user_id(rest)
         if not target: return True
-
         if key == 'проверить':
             text_out = _build_check(vk, target, peer_id)
             _send(vk, peer_id, text_out or 'Пользователь не найден.', actor_inline=False)
             return True
-
         if not can_act(user_id, target, peer_id):
             _send(vk, peer_id, 'Недостаточно прав', actor_inline=False)
             return True
@@ -443,8 +424,7 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             add_kick_event(target, peer_id, user_id)
             kicked = 0
             for cp, _ in get_all_chats():
-                if cp == APPLICATIONS_PEER_ID: continue
-                if cp == peer_id: continue
+                if cp == APPLICATIONS_PEER_ID or cp == peer_id: continue
                 try:
                     members = vk.messages.getConversationMembers(peer_id=cp).get('items', [])
                     if any(m.get('member_id') == target for m in members):
@@ -669,9 +649,6 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
 
     if key == 'рассылка':
         rest = raw_rest
-        if not get_feature(peer_id, 'рассылка'):
-            _send(vk, peer_id, 'Рассылка отключена.', actor_inline=False)
-            return True
         if not rest:
             _send(vk, peer_id, 'Укажи сообщение.', actor_inline=False)
             return True
@@ -685,20 +662,10 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
         log_to_control(vk, f'📢 Рассылка\nАдмин: [id{user_id}|{user_id}]\nТекст: {rest[:50]}...\nДоставлено: {ok}')
         return True
 
-    if key.startswith('переключить '):
-        feature = key[len('переключить '):]
-        state = toggle_feature(peer_id, feature)
-        _send(vk, peer_id, f'⚙️ {feature}: {"включено" if state else "выключено"}.', actor_inline=False)
-        return True
-
     if key == 'беседа':
         a = get_chat_activity(peer_id)
         _send(vk, peer_id, (
             f'💬 Текущая беседа\n📊 День: {a["today"]}\n📆 Неделя: {a["week"]}\n📆 Месяц: {a["month"]}\n📈 Всё время: {a["total"]}\n'
-            f'⚙️ Казино: {"включено" if get_feature(peer_id, "казино") else "выключено"}\n'
-            f'⚔️ Дуэли: {"включены" if get_feature(peer_id, "дуэль") else "выключены"}\n'
-            f'📢 Рассылка: {"включена" if get_feature(peer_id, "рассылка") else "выключена"}\n'
-            f'🔇 Мут: {"включён" if get_feature(peer_id, "мут") else "выключен"}\n'
             f'🧹 Чистка: {"включена" if get_feature(peer_id, "чистка") else "выключена"}'
         ), actor_inline=False)
         return True
