@@ -461,30 +461,56 @@ def handle_admin_command(command, user_id, peer_id, vk, text):
             log_to_control(vk, f'👢 Фулл-кик ({kicked} бесед)\nБеседа: {chat_title}\nАдмин: {admin_name}\nПользователь: {target_name}')
             return True
 
-        if key == 'снять':
-            if get_global_role(target):
-                if get_admin_level(user_id, peer_id) < 7:
-                    _send(vk, peer_id, 'Недостаточно прав', actor_inline=False)
-                    return True
-                set_global_role(target, 0)
-                _send(vk, peer_id, f'снял глобальную роль с {target_name}.')
-                _refresh_all_pins(vk)
-                log_to_control(vk, f'📉 Снятие глобальной роли\nБеседа: {chat_title}\nАдмин: {admin_name}\nПользователь: {target_name}')
-                return True
-            with db_cursor() as (_, c):
-                c.execute("SELECT peer_id FROM admin_chat_rights WHERE user_id=? AND level>0", (target,))
-                rows = c.fetchall()
-            if not rows:
-                _send(vk, peer_id, f'У {target_name} нет прав.', actor_inline=False)
-                return True
-            removed = []
-            for (rp,) in rows:
-                set_admin_level(rp, target, 0, 'Участник')
-                removed.append(rp)
-            _send(vk, peer_id, f'снял права с {target_name} в {len(removed)} беседах.')
-            for rp in removed: _refresh_pin(vk, rp)
-            log_to_control(vk, f'📉 Снятие локальных ролей\nБеседа: {chat_title}\nАдмин: {admin_name}\nПользователь: {target_name}\nБесед: {len(removed)}')
+    if key == 'снять':
+        target = extract_user_id(rest)
+        if not target:
+            _send(vk, peer_id, 'Формат: `лл снять @user`', actor_inline=False)
             return True
+
+        # ЗАЩИТА ОТ СНЯТИЯ САМОГО СЕБЯ
+        if target == user_id:
+            _send(vk, peer_id, 'Нельзя снять права с самого себя.', actor_inline=False)
+            return True
+
+        # 1. Проверка на глобальные роли
+        if get_global_role(target):
+            if get_admin_level(user_id, peer_id) < 7:
+                _send(vk, peer_id, 'Снимать глобальные роли (Вершитель/Лелуш) может только Лелуш.', actor_inline=False)
+                return True
+            set_global_role(target, 0)
+            _send(vk, peer_id, f'Глобальная роль снята с {_user_link(vk, target)}.', actor_inline=False)
+            _refresh_all_pins(vk)
+            log_to_control(vk, f'📉 Снятие глобальной роли\nБеседа: {_get_chat_title(vk, peer_id)}\nАдмин: {_user_link(vk, user_id)}\nПользователь: {_user_link(vk, target)}')
+            return True
+
+        # 2. Ищем локальные роли
+        with db_cursor() as (_, c):
+            c.execute('SELECT peer_id, level FROM admin_chat_rights WHERE user_id=? AND level>0', (target,))
+            rows = c.fetchall()
+
+        if not rows:
+            _send(vk, peer_id, f'У {_user_link(vk, target)} нет административных прав.', actor_inline=False)
+            return True
+
+        # 3. Проверка прав на снятие
+        for target_peer, target_level in rows:
+            if not can_act(user_id, target, target_peer):
+                _send(vk, peer_id, f'Недостаточно прав. Вы не можете снять права с {_user_link(vk, target)} в беседе {_get_chat_title(vk, target_peer)}.', actor_inline=False)
+                return True
+
+        # 4. Удаляем локальные роли
+        removed = []
+        for target_peer, _ in rows:
+            set_admin_level(target_peer, target, 0, 'Участник')
+            removed.append(target_peer)
+            
+        _send(vk, peer_id, f'Сняты локальные права с {_user_link(vk, target)} в {len(removed)} беседах.', actor_inline=False)
+        
+        for target_peer in removed: 
+            _refresh_pin(vk, target_peer)
+            
+        log_to_control(vk, f'📉 Снятие локальных ролей\nБеседа: {_get_chat_title(vk, peer_id)}\nАдмин: {_user_link(vk, user_id)}\nПользователь: {_user_link(vk, target)}\nБесед: {len(removed)}')
+        return True
 
     if key == 'админ стат':
         stats = get_admin_chat_stats(peer_id, user_id)
