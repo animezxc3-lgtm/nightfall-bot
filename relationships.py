@@ -1,50 +1,55 @@
 ﻿import re
+from datetime import datetime
 from database import *
 
-MAX_CHILDREN=5
+MAX_CHILDREN = 5
 
 def profile_link(uid):
-    name=get_display_name(uid) or 'Пользователь'
+    name = get_display_name(uid) or 'Пользователь'
     return f'https://vk.com/id{uid} ({name})'
 
 def parse_target_id(text):
-    if not text:
-        return None
+    if not text: return None
     text = str(text).strip()
-
     m = re.search(r'\[id(\d+)\|', text)
-    if m:
-        return int(m.group(1))
-
+    if m: return int(m.group(1))
     m = re.search(r'vk\.(?:com|ru)/id(\d+)', text)
-    if m:
-        return int(m.group(1))
-
+    if m: return int(m.group(1))
     m = re.search(r'@id(\d+)', text)
-    if m:
-        return int(m.group(1))
-
+    if m: return int(m.group(1))
     m = re.search(r'\b(\d{3,15})\b', text)
-    if m:
-        return int(m.group(1))
-
+    if m: return int(m.group(1))
     return None
 
 def _row(uid):
-    with db_cursor() as (_,c): c.execute('SELECT partner_id,married,family_surname FROM relationships WHERE user_id=?',(uid,)); return c.fetchone()
-def get_partner_id(uid): r=_row(uid); return r[0] if r else None
-def get_family_surname(uid): r=_row(uid); return r[2] if r else ''
+    with db_cursor() as (_,c): 
+        c.execute('SELECT partner_id,married,family_surname FROM relationships WHERE user_id=?',(uid,))
+        return c.fetchone()
+
+def get_partner_id(uid): 
+    r = _row(uid)
+    return r[0] if r else None
+
+def get_family_surname(uid): 
+    r = _row(uid)
+    return r[2] if r else ''
+
 def get_display_name(uid):
-    u=get_user(uid)
-    if not u:return None
-    base=u[2] or (u[1].split()[0] if u[1] else f'пользователь {uid}')
-    surname=get_family_surname(uid)
+    u = get_user(uid)
+    if not u: return None
+    base = u[2] or (u[1].split()[0] if u[1] else f'пользователь {uid}')
+    surname = get_family_surname(uid)
     return f'{base} {surname}'.strip() if surname else base
 
 def get_children(uid):
-    with db_cursor() as (_,c): c.execute('SELECT child_id FROM family_children WHERE parent_id=? ORDER BY id',(uid,)); return [r[0] for r in c.fetchall()]
+    with db_cursor() as (_,c): 
+        c.execute('SELECT child_id FROM family_children WHERE parent_id=? ORDER BY id',(uid,))
+        return [r[0] for r in c.fetchall()]
+
 def get_parents(uid):
-    with db_cursor() as (_,c): c.execute('SELECT parent_id FROM family_children WHERE child_id=? ORDER BY id',(uid,)); return [r[0] for r in c.fetchall()]
+    with db_cursor() as (_,c): 
+        c.execute('SELECT parent_id FROM family_children WHERE child_id=? ORDER BY id',(uid,))
+        return [r[0] for r in c.fetchall()]
 
 def start_relationship(uid, target, vk=None):
     if not target or target == uid:
@@ -54,51 +59,72 @@ def start_relationship(uid, target, vk=None):
     if get_partner_id(uid) or get_partner_id(target):
         return False, 'Один из пользователей уже состоит в отношениях.'
     create_relationship_proposal(target, uid)
-    return True, '❤️ предлагает тебе начать отношения!'
+    return True, ''
 
 def accept_relationship(target):
-    p=get_relationship_proposal(target)
-    if not p:return 'Для тебя нет действующего предложения отношений.'
-    proposer=p[0]
-    if get_partner_id(target) or get_partner_id(proposer): delete_relationship_proposal(target); return 'Предложение больше недействительно.'
-    from datetime import datetime as _dt
-    now = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    p = get_relationship_proposal(target)
+    if not p: return 'Для тебя нет действующего предложения отношений.'
+    proposer = p[0]
+    if get_partner_id(target) or get_partner_id(proposer): 
+        delete_relationship_proposal(target)
+        return 'Предложение больше недействительно.'
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with db_cursor(True) as (_,c):
         c.execute('UPDATE relationships SET partner_id=?, relationship_since=? WHERE user_id=?',(target,now,proposer))
         c.execute('UPDATE relationships SET partner_id=?, relationship_since=? WHERE user_id=?',(proposer,now,target))
-    delete_relationship_proposal(target); return '❤️ Согласие принято! Теперь вы состоите в отношениях.'
+    delete_relationship_proposal(target)
+    return '❤️ Согласие принято! Теперь вы состоите в отношениях.'
 
 def reject_relationship(target):
-    p=get_relationship_proposal(target)
-    if not p:return 'Предложение больше недействительно.'
-    delete_relationship_proposal(target); return '💔 Предложение отклонено.'
+    p = get_relationship_proposal(target)
+    if not p: return 'Предложение больше недействительно.'
+    delete_relationship_proposal(target)
+    return '💔 Предложение отклонено.'
 
 def end_relationship(uid):
-    partner=get_partner_id(uid)
-    if not partner:return 'У тебя нет партнёра.'
-    with db_cursor(True) as (_,c): c.execute("UPDATE relationships SET partner_id=NULL,married=0,family_surname='',relationship_since=NULL WHERE user_id IN (?,?)",(uid,partner))
-    return '💔 Вы больше не состоите в отношениях. Брак и фамилия семьи расторгнуты.'
+    partner = get_partner_id(uid)
+    if not partner: return 'У тебя нет партнёра.'
+    
+    r = _row(uid)
+    if r and r[1]: # Если в браке
+        return 'Вы состоите в браке. Используйте команду `лл развод`.'
+        
+    with db_cursor(True) as (_,c): 
+        c.execute("UPDATE relationships SET partner_id=NULL, married=0, family_surname='', relationship_since=NULL WHERE user_id IN (?,?)",(uid,partner))
+    return '💔 Вы больше не состоите в отношениях.'
 
-def propose_marriage(uid,target,surname):
-    if get_partner_id(uid)!=target or get_partner_id(target)!=uid:return False,'Сначала начните отношения друг с другом.'
-    r=_row(uid)
-    if r and r[1]:return False,'Вы уже состоите в браке.'
-    if not 1<=len(surname)<=30:return False,'Фамилия должна быть от 1 до 30 символов.'
-    create_marriage_proposal(target,uid,surname); return True,'💍 делает тебе предложение руки и сердца!'
+def divorce(uid):
+    partner = get_partner_id(uid)
+    if not partner: return 'У тебя нет супруга/супруги.'
+    
+    with db_cursor(True) as (_,c): 
+        c.execute("UPDATE relationships SET partner_id=NULL, married=0, family_surname='', relationship_since=NULL WHERE user_id IN (?,?)",(uid,partner))
+    return '💔 Вы развелись. Брак и фамилия семьи расторгнуты.'
+
+def propose_marriage(uid, target, surname):
+    if get_partner_id(uid) != target or get_partner_id(target) != uid:
+        return False, 'Сначала начните отношения друг с другом.'
+    if not 1 <= len(surname) <= 30:
+        return False, 'Фамилия должна быть от 1 до 30 символов.'
+    create_marriage_proposal(target, uid, surname)
+    return True, ''
 
 def accept_marriage(target):
-    p=get_marriage_proposal(target)
-    if not p:return 'У тебя нет ожидающего предложения брака.'
-    proposer,surname,_=p
-    if get_partner_id(target)!=proposer or get_partner_id(proposer)!=target: delete_marriage_proposal(target); return 'Предложение больше недействительно.'
-    with db_cursor(True) as (_,c): c.execute('UPDATE relationships SET married=1,family_surname=? WHERE user_id IN (?,?)',(surname,target,proposer))
-    delete_marriage_proposal(target); return f'💍 Согласие принято! Теперь вы семья с фамилией «{surname}».'
+    p = get_marriage_proposal(target)
+    if not p: return 'У тебя нет ожидающего предложения брака.'
+    proposer, surname, _ = p
+    if get_partner_id(target) != proposer or get_partner_id(proposer) != target: 
+        delete_marriage_proposal(target)
+        return 'Предложение больше недействительно.'
+    with db_cursor(True) as (_,c): 
+        c.execute('UPDATE relationships SET married=1,family_surname=? WHERE user_id IN (?,?)',(surname,target,proposer))
+    delete_marriage_proposal(target)
+    return f'💍 Согласие принято! Теперь вы семья с фамилией «{surname}».'
 
 def reject_marriage(target):
-    if not get_marriage_proposal(target):return 'У тебя нет ожидающего предложения брака.'
-    delete_marriage_proposal(target); return '💔 Предложение брака отклонено.'
-
-def divorce(uid): return end_relationship(uid) if get_partner_id(uid) else 'У тебя нет супруга/супруги.'
+    if not get_marriage_proposal(target): return 'У тебя нет ожидающего предложения брака.'
+    delete_marriage_proposal(target)
+    return '💔 Предложение брака отклонено.'
 
 def adopt(parent, child, vk=None):
     if not parent or not child or parent == child:
@@ -115,104 +141,86 @@ def adopt(parent, child, vk=None):
     if len(parents) >= 2:
         return False, 'У данного пользователя уже есть два родителя.'
 
-    # Prevent family cycles: a descendant cannot adopt one of their ancestors.
     stack = [child]
     visited = set()
     while stack:
         current = stack.pop()
-        if current in visited:
-            continue
+        if current in visited: continue
         visited.add(current)
         if current == parent:
             return False, 'Нельзя создать циклическую связь в семейном дереве.'
         stack.extend(get_children(current))
 
     create_family_proposal(child, parent, 'ребёнок')
-    return True, '👪 предлагает тебе стать членом семьи.'
+    return True, ''
 
 def accept_family_addition(child):
     proposal = get_family_proposal(child)
     if not proposal:
         return 'У тебя нет действующего предложения вступить в семью.'
     parent, relation, _ = proposal
-    if (
-        not get_user(parent)
-        or not get_user(child)
-        or len(get_children(parent)) >= MAX_CHILDREN
-        or len(get_parents(child)) >= 2
-        or child in get_children(parent)
-    ):
+    if (not get_user(parent) or not get_user(child) or len(get_children(parent)) >= MAX_CHILDREN 
+        or len(get_parents(child)) >= 2 or child in get_children(parent)):
         delete_family_proposal(child)
         return 'Предложение больше недействительно.'
     with db_cursor(True) as (_, c):
-        c.execute(
-            'INSERT INTO family_children(parent_id, child_id) VALUES(?, ?) ON CONFLICT DO NOTHING',
-            (parent, child),
-        )
+        c.execute('INSERT INTO family_children(parent_id, child_id) VALUES(?, ?) ON CONFLICT DO NOTHING', (parent, child))
     delete_family_proposal(child)
     return '👪 Согласие принято! Ты добавлен(а) в семью.'
 
 def reject_family_addition(child):
-    if not get_family_proposal(child):return 'У тебя нет действующего предложения вступить в семью.'
-    delete_family_proposal(child); return '💔 Предложение вступить в семью отклонено.'
+    if not get_family_proposal(child): return 'У тебя нет действующего предложения вступить в семью.'
+    delete_family_proposal(child)
+    return '💔 Предложение вступить в семью отклонено.'
 
-def relinquish(parent,child,vk=None):
-    if child not in get_children(parent):return ''
-    with db_cursor(True) as (_,c): c.execute('DELETE FROM family_children WHERE parent_id=? AND child_id=?',(parent,child))
+def relinquish(parent, child, vk=None):
+    if child not in get_children(parent): return ''
+    with db_cursor(True) as (_,c): 
+        c.execute('DELETE FROM family_children WHERE parent_id=? AND child_id=?',(parent,child))
     return '🏠 Ребёнок больше не числится в семье.'
 
 def leave_family(uid):
-    if not get_parents(uid):return 'Ты не состоишь ни в одной семье.'
-    with db_cursor(True) as (_,c): c.execute('DELETE FROM family_children WHERE child_id=?',(uid,))
+    if not get_parents(uid): return 'Ты не состоишь ни в одной семье.'
+    with db_cursor(True) as (_,c): 
+        c.execute('DELETE FROM family_children WHERE child_id=?',(uid,))
     return '🚪 Ты ушёл/ушла из семьи.'
 
 def relationship_status(uid,vk=None):
-    p=get_partner_id(uid); r=_row(uid); married=bool(r and r[1]); surname=get_family_surname(uid); children=get_children(uid); parents=get_parents(uid)
+    p=get_partner_id(uid)
+    r=_row(uid)
+    married=bool(r and r[1])
+    surname=get_family_surname(uid)
+    children=get_children(uid)
+    parents=get_parents(uid)
     return f"❤️ Партнёр: {profile_link(p) if p else 'Нет'}\n💍 Брак: {'да' if married else 'нет'}\n👤 Фамилия семьи: {surname or 'не установлена'}\n👪 Родителей: {len(parents)}\n🧒 Детей: {len(children)}/{MAX_CHILDREN}"
-
 
 def get_relationship_since(uid):
     with db_cursor() as (_, c):
         r = c.execute("SELECT relationship_since FROM relationships WHERE user_id=?", (uid,)).fetchone()
         return r[0] if r and r[0] else None
 
-
 def get_days_in_relationship(uid):
     since = get_relationship_since(uid)
-    if not since:
-        return None
+    if not since: return None
     try:
-        from datetime import datetime as _dt
-        dt = _dt.strptime(since[:19], "%Y-%m-%d %H:%M:%S")
-        delta = _dt.now() - dt
+        dt = datetime.strptime(since[:19], "%Y-%m-%d %H:%M:%S")
+        delta = datetime.now() - dt
         return delta.days
-    except Exception:
-        return None
-
+    except Exception: return None
 
 def get_common_children(uid):
     partner = get_partner_id(uid)
     ids = set()
     if partner:
-        for c in get_children(uid):
-            ids.add(c)
-        for c in get_children(partner):
-            ids.add(c)
+        for c in get_children(uid): ids.add(c)
+        for c in get_children(partner): ids.add(c)
     else:
-        for c in get_children(uid):
-            ids.add(c)
+        for c in get_children(uid): ids.add(c)
     return list(ids)
-
 
 def get_family_stats(uid, vk=None):
     partner = get_partner_id(uid)
     days = get_days_in_relationship(uid) if partner else None
     children = get_common_children(uid)
     parents = get_parents(uid)
-
-    return {
-        'partner': partner,
-        'days': days,
-        'children': children,
-        'parents': parents,
-    }
+    return {'partner': partner, 'days': days, 'children': children, 'parents': parents}

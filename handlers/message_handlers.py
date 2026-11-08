@@ -374,17 +374,76 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, text_family, exclude_actor=True)
         return
 
-    # ─── ОТНОШЕНИЯ ──────────────────────────────────────
-    if command.startswith('начать отношения '):
-        target = _target(command[len('начать отношения '):])
+               # ─── ОТНОШЕНИЯ (АЛИАСЫ) ─────────────────────────────
+    if command.startswith('встречаться '):
+        target = _target(command[len('встречаться '):])
         if not target or target == user_id: return
+        
+        actor_name = get_display_name(user_id) or 'Пользователь'
+        actor_link = f'[id{user_id}|{actor_name}]'
+        target_link = _user_link(vk, target)
+        
         result = start_relationship(user_id, target, vk)
         if isinstance(result, tuple): ok, msg = result
         else: ok, msg = True, str(result)
+        
         if ok:
             from keyboards import relationship_proposal_keyboard
-            _send(vk, peer_id, msg, relationship_proposal_keyboard())
-        else: _send(vk, peer_id, msg)
+            custom_msg = f'❤️ {actor_link} предлагает {target_link} начать отношения!'
+            _send(vk, peer_id, custom_msg, relationship_proposal_keyboard())
+        else: 
+            _send(vk, peer_id, msg)
+        return
+
+    if command == 'семья' or command.startswith('семья '):
+        rest = command[len('семья'):].strip() if command != 'семья' else ''
+        target = _target(rest) if rest else user_id
+        if not target or not get_user(target): return
+        
+        stats = get_family_stats(target)
+        
+        def _fmt_users(ids):
+            if not ids: return 'Нет'
+            return ', '.join(_user_link(vk, uid) for uid in ids)
+
+        partner_line = _user_link(vk, stats['partner']) if stats['partner'] else 'Нет'
+        days_line = str(stats['days']) if stats['days'] is not None else '—'
+
+        text_family = (
+            f'Статистика семьи {_user_link(vk, target)}\n'
+            f'Партнёр: {partner_line}\n'
+            f'Дней в отношениях: {days_line}\n'
+            f'Дети: {_fmt_users(stats["children"])}\n'
+            f'Родители: {_fmt_users(stats["parents"])}'
+        )
+        _send(vk, peer_id, text_family, exclude_actor=True)
+        return
+
+    if command.startswith('выгнать из семьи '):
+        target = _target(command[len('выгнать из семьи '):])
+        _send(vk, peer_id, relinquish(user_id, target, vk))
+        return
+
+    if command.startswith('отправить в детдом '):
+        target = _target(command[len('отправить в детдом '):])
+        _send(vk, peer_id, relinquish(user_id, target, vk))
+        return
+
+    if command == 'развод':
+        _send(vk, peer_id, divorce(user_id))
+        return
+
+    if command == 'покинуть семью':
+        _send(vk, peer_id, leave_family(user_id))
+        return
+
+    if command == 'цем':
+        partner = get_partner_id(user_id)
+        if not partner: return
+        from handlers.rp_handlers import RP_RESPONSES
+        import random
+        other = f'[id{partner}|{get_display_name(partner) or "партнёр"}]'
+        _send(vk, peer_id, random.choice(RP_RESPONSES['поцеловать']).format(target=other))
         return
 
     if command.startswith('создать брак '):
@@ -397,47 +456,32 @@ def handle_command(command, user_id, peer_id, vk, text):
         surname = re.sub(rf'\b{target}\b', ' ', surname)
         surname = ' '.join(surname.split())
         if not surname or len(surname) > 30 or target == user_id: return
+        
         result = propose_marriage(user_id, target, surname)
         if isinstance(result, tuple): ok, msg = result
         else: ok, msg = True, str(result)
+        
         if ok:
             from keyboards import marriage_proposal_keyboard
-            _send(vk, peer_id, msg, marriage_proposal_keyboard())
-        else: _send(vk, peer_id, msg)
+            actor_name = get_display_name(user_id) or 'Пользователь'
+            actor_link = f'[id{user_id}|{actor_name}]'
+            target_link = _user_link(vk, target)
+            
+            text_msg = (
+                f'💍 {actor_link} делает {target_link} предложение руки и сердца!\n'
+                f'Предлагаемая фамилия: {surname}'
+            )
+            _send(vk, peer_id, text_msg, marriage_proposal_keyboard())
+        else: 
+            _send(vk, peer_id, msg)
         return
-
-    if command == 'расстаться': _send(vk, peer_id, end_relationship(user_id)); return
-
-    if command == 'поцеловаться' or command == 'обняться':
-        partner = get_partner_id(user_id)
-        if not partner: return
-        from handlers.rp_handlers import RP_RESPONSES
-        import random
-        action = 'поцеловать' if command == 'поцеловаться' else 'обнять'
-        other = f'[id{partner}|{get_display_name(partner) or "партнёр"}]'
-        _send(vk, peer_id, random.choice(RP_RESPONSES[action]).format(target=other))
+        
+    if command == 'расстаться':
+        _send(vk, peer_id, end_relationship(user_id))
         return
-
-    if command == 'развестись': _send(vk, peer_id, divorce(user_id)); return
-
-    for cmdname in ('усыновить', 'удочерить'):
-        if command.startswith(cmdname + ' '):
-            target = _target(command[len(cmdname) + 1:])
-            result = adopt(user_id, target, vk)
-            if isinstance(result, tuple): ok, msg = result
-            else: ok, msg = True, result
-            if ok:
-                from keyboards import family_proposal_keyboard
-                _send(vk, peer_id, msg, family_proposal_keyboard())
-            else: _send(vk, peer_id, msg)
-            return
-
-    if command.startswith('сдать в детдом '):
-        _send(vk, peer_id, relinquish(user_id, _target(command[len('сдать в детдом '):]), vk)); return
-    if command == 'уйти из семьи': _send(vk, peer_id, leave_family(user_id)); return
 
     # ─── RP ─────────────────────────────────────────────
-    rp_names = ['обнять', 'поцеловать', 'пожать руку', 'погладить', 'ущипнуть', 'укусить', 'дать пять', 'пнуть', 'положить в дурку', 'посадить на бутылку', 'застрелить', 'курить', 'уснуть', 'разбудить', 'накормить', 'подарить', 'пиво']
+    rp_names = ['обнять', 'поцеловать', 'пожать руку', 'погладить', 'ущипнуть', 'укусить', 'дать пять', 'пнуть', 'положить в дурку', 'посадить на бутылку', 'застрелить', 'курить', 'уснуть', 'разбудить', 'накормить', 'подарить', 'пиво', 'подрочить', 'секс', 'футджоб', 'принять душ', 'минет', 'куни', '69']
     rp_command = next((x for x in sorted(rp_names, key=len, reverse=True) if command == x or command.startswith(x + ' ')), None)
     if rp_command:
         result = handle_rp_command(rp_command, user_id, peer_id, vk, text, get_user)

@@ -2,8 +2,6 @@
 from config import RP_ALBUMS
 from database import get_random_rp_photo
 
-
-# Шаблоны только с {target}. Actor добавляется сверху в message_handlers.
 RP_RESPONSES = {
     'обнять': ['обнял(а) {target} 🤗', 'крепко обнял(а) {target} ❤️'],
     'поцеловать': ['поцеловал(а) {target} 😘', 'поцеловал(а) {target} ❤️'],
@@ -22,8 +20,14 @@ RP_RESPONSES = {
     'разбудить': ['разбудил(а) {target} ⏰'],
     'накормить': ['накормил(а) {target} 🍲'],
     'подарить': ['подарил(а) {target} подарок 🎁'],
+    'подрочить': ['помог(ла) {target} расслабиться рукой 😏', 'ласково подрочил(а) {target} 🍆'],
+    'секс': ['страстно занялся(ась) сексом с {target} 🔥', 'провёл(а) незабываемую ночь с {target} 🥵'],
+    'футджоб': ['сделал(а) {target} приятно ножками 🦶', 'подарил(а) {target} наслаждение ступнями 👣'],
+    'принять душ': ['принял(а) душ вместе с {target} 🚿', 'хорошенько намылил(а) спинку {target} 🧼'],
+    'минет': ['сделал(а) {target} приятно ртом 👄', 'опустился(ась) перед {target} 🤤'],
+    'куни': ['сделал(а) {target} приятно языком 👅', 'подарил(а) {target} оральное наслаждение 💦'],
+    '69': ['занял(ась) взаимной лаской с {target} 🔄', 'попробовал(а) позу 69 с {target} 🛏️'],
 }
-
 
 SELF_RESPONSES = {
     'обнять': 'обнял(а) себя. Всё так плохо?',
@@ -43,47 +47,51 @@ SELF_RESPONSES = {
     'разбудить': 'каким-то чудом разбудил(а) себя. Каковы ощущения?',
     'накормить': 'накормил(а) себя. Пожелаем ему приятного аппетита!',
     'подарить': 'сделал(а) себе подарок. Интересно, что же он выбрал?',
+    'подрочить': 'решил(а) заняться самоудовлетворением.',
+    'секс': 'занялся(ась) самоудовлетворением.',
+    'футджоб': 'попытался(ась) сделать это сам(а). Гибкость — это талант.',
+    'принять душ': 'пошёл(пошла) в душ. Хотя бы гигиена соблюдена.',
+    'минет': 'попытался(ась) сделать это сам(а). Гибкость — это талант.',
+    'куни': 'попытался(ась) сделать это сам(а). Гибкость — это талант.',
+    '69': 'попытался(ась) сделать это сам(а). Гибкость — это талант.',
 }
 
-
 def get_random_photo_from_album(command):
-    """Returns a cached VK attachment; never calls photos.get with the group token."""
-    try:
-        return get_random_rp_photo(command)
+    try: return get_random_rp_photo(command)
     except Exception as e:
         print(f'⚠️ RP photo cache ({command}): {e}')
         return None
 
-
 def _extract_target_id(text):
-    if not text:
-        return None
+    if not text: return None
     m = re.search(r'\[id(\d+)\|', text)
-    if m:
-        return int(m.group(1))
+    if m: return int(m.group(1))
     m = re.search(r'@id(\d+)', text)
-    if m:
-        return int(m.group(1))
+    if m: return int(m.group(1))
     m = re.search(r'\b(\d{3,15})\b', text)
     return int(m.group(1)) if m else None
-
 
 def _mention(uid, fallback='пользователь'):
     from relationships import get_display_name
     name = get_display_name(uid) or fallback
     return f'[id{uid}|{name}]'
 
-
 def handle_rp_command(command, user_id, peer_id, vk, text, get_user):
+    from relationships import get_partner_id
+    
     target = _extract_target_id(text)
-    actor = _mention(user_id, 'пользователь')
+    
+    adult_commands = ['подрочить', 'секс', 'футджоб', 'принять душ', 'минет', 'куни', '69']
+    if command in adult_commands:
+        partner = get_partner_id(user_id)
+        if target != partner:
+            return '❌ Это действие доступно только для твоей второй половинки.', None
 
     if target is None or target == user_id:
         if target == user_id:
             return '❌ Нельзя использовать это действие на самого себя.', None
         template = SELF_RESPONSES.get(command)
-        if not template:
-            return None, None
+        if not template: return None, None
         return template, None
 
     if not get_user(target):
@@ -91,10 +99,7 @@ def handle_rp_command(command, user_id, peer_id, vk, text, get_user):
 
     target_mention = _mention(target, 'пользователь')
     templates = RP_RESPONSES.get(command)
-    if not templates:
-        return None, None
+    if not templates: return None, None
     body = random.choice(templates).format(target=target_mention)
-    # actor добавляется сверху в _send
-    result = f'{body}'
     photo = get_random_photo_from_album(command) if RP_ALBUMS.get(command) else None
-    return result, photo
+    return f'{body}', photo
