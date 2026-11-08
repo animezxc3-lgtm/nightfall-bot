@@ -934,3 +934,34 @@ def record_tag(user_id, peer_id, tag_type):
             VALUES(?,?,?,?,1) 
             ON CONFLICT(user_id, peer_id, tag_type, date) DO UPDATE SET count = count + 1
         """, (user_id, peer_id, tag_type, today))
+
+# --- ТОПЫ ---
+
+def get_top_activity(peer_id, period):
+    now = datetime.now()
+    if period == 'день':
+        start_date = now.strftime("%Y-%m-%d")
+    elif period == 'неделя':
+        start_date = _week_start(now).strftime("%Y-%m-%d")
+    elif period == 'месяц':
+        start_date = _month_start(now).strftime("%Y-%m-%d")
+    else:
+        start_date = "1970-01-01" # Все время
+
+    with db_cursor() as (_, c):
+        if peer_id:
+            # Топ по конкретной беседе
+            query = "SELECT user_id, SUM(count) as total FROM chat_message_stats WHERE peer_id=? AND date >= ? GROUP BY user_id ORDER BY total DESC LIMIT 10"
+            rows = c.execute(query, (peer_id, start_date)).fetchall()
+        else:
+            # Топ по всем беседам
+            query = "SELECT user_id, SUM(count) as total FROM messages_stats WHERE date >= ? GROUP BY user_id ORDER BY total DESC LIMIT 10"
+            rows = c.execute(query, (start_date,)).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+def get_top_stat(field):
+    if field not in ('coins', 'power', 'soul_gems'): return []
+    with db_cursor() as (_, c):
+        query = f"SELECT user_id, {field} FROM users WHERE {field} > 0 ORDER BY {field} DESC LIMIT 10"
+        rows = c.execute(query).fetchall()
+        return [(r[0], r[1]) for r in rows]

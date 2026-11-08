@@ -1,6 +1,9 @@
 ﻿import json, re
 from datetime import datetime, timedelta
-from config import CREATOR_ID, ALLOWED_IN_DM, MAIN_CHATS, ANARCHY_CHAT, CASINO_CHAT
+from config import (
+    CREATOR_ID, ALLOWED_IN_DM, MAIN_CHATS, ANARCHY_CHAT, CASINO_CHAT, 
+    CITADEL_CHAT, APPLICATIONS_PEER_ID
+)
 from database import (
     get_user, create_user, user_exists, transfer_coins, debit_gems, 
     update_coins, update_gems, update_power, clear_warnings, set_nickname, get_owner, 
@@ -18,7 +21,7 @@ from wheel import spin_wheel, draw_wheel
 from vk_upload import upload_photo
 from jobs.work_handler import work, hire, fire, job_stats
 from handlers.user_handlers import get_profile, get_profile_data, get_balance, get_activity, is_admin
-from handlers.rp_handlers import handle_rp_command
+from handlers.rp_handlers import handle_rp_command, RP_RESPONSES
 from relationships import (
     parse_target_id, start_relationship, end_relationship, divorce,
     propose_marriage, adopt, relinquish, leave_family, get_partner_id,
@@ -173,8 +176,12 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, msg)
         if target == user_id: _record_task_event(vk, peer_id, user_id, 'activity')
         return
-    
-    # ─── ТВИНКИ (СО СТАТИСТИКОЙ) ──────────────────────────
+
+    if command == 'норма' or command.startswith('норма '):
+        handle_norma(command, user_id, peer_id, vk)
+        return
+
+    # ─── ТВИНКИ ─────────────────────────────────────────
     if command == 'твинк' or command.startswith('твинк '):
         parts = command.split(maxsplit=2)
         if len(parts) >= 2 and parts[1] == 'убрать':
@@ -209,15 +216,11 @@ def handle_command(command, user_id, peer_id, vk, text):
             
         lines = [header]
         for tid in twinks:
-            # Статистика сообщений
             msg_stats = get_messages_stats(tid)
-            
-            # Статистика приглашений (за все время, за день, за неделю, за месяц)
             with db_cursor() as (_, c):
                 today = datetime.now().strftime("%Y-%m-%d")
                 week = (datetime.now() - timedelta(days=datetime.now().weekday())).strftime("%Y-%m-%d")
                 month = datetime.now().replace(day=1).strftime("%Y-%m-%d")
-                
                 inv_total = c.execute("SELECT COUNT(*) FROM chat_members WHERE invited_by=?", (tid,)).fetchone()[0]
                 inv_today = c.execute("SELECT COUNT(*) FROM chat_members WHERE invited_by=? AND substr(first_join_at,1,10)=?", (tid, today)).fetchone()[0]
                 inv_week = c.execute("SELECT COUNT(*) FROM chat_members WHERE invited_by=? AND substr(first_join_at,1,10)>=?", (tid, week)).fetchone()[0]
@@ -225,9 +228,15 @@ def handle_command(command, user_id, peer_id, vk, text):
 
             lines.append(f'• {_user_link(vk, tid)}')
             lines.append(f'  💬 Сообщения:')
-            lines.append(f'    Сегодня: {msg_stats["today"]} | За неделю: {msg_stats["week"]} | За месяц: {msg_stats["month"]} | Всего: {msg_stats["total"]}')
+            lines.append(f'    Сегодня: {msg_stats["today"]}')
+            lines.append(f'    За неделю: {msg_stats["week"]}')
+            lines.append(f'    За месяц: {msg_stats["month"]}')
+            lines.append(f'    За всё время: {msg_stats["total"]}')
             lines.append(f'  👥 Приглашено:')
-            lines.append(f'    Сегодня: {inv_today} | За неделю: {inv_week} | За месяц: {inv_month} | Всего: {inv_total}')
+            lines.append(f'    Сегодня: {inv_today}')
+            lines.append(f'    За неделю: {inv_week}')
+            lines.append(f'    За месяц: {inv_month}')
+            lines.append(f'    За всё время: {inv_total}')
             lines.append('')
             
         if lines[-1] == '': lines.pop()
@@ -374,7 +383,7 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, text_family, exclude_actor=True)
         return
 
-               # ─── ОТНОШЕНИЯ (АЛИАСЫ) ─────────────────────────────
+    # ─── ОТНОШЕНИЯ (АЛИАСЫ) ─────────────────────────────
     if command.startswith('встречаться '):
         target = _target(command[len('встречаться '):])
         if not target or target == user_id: return
@@ -440,7 +449,6 @@ def handle_command(command, user_id, peer_id, vk, text):
     if command == 'цем':
         partner = get_partner_id(user_id)
         if not partner: return
-        from handlers.rp_handlers import RP_RESPONSES
         import random
         other = f'[id{partner}|{get_display_name(partner) or "партнёр"}]'
         _send(vk, peer_id, random.choice(RP_RESPONSES['поцеловать']).format(target=other))
@@ -480,10 +488,46 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, end_relationship(user_id))
         return
 
+    for cmdname in ('усыновить', 'удочерить'):
+        if command.startswith(cmdname + ' '):
+            target = _target(command[len(cmdname) + 1:])
+            result = adopt(user_id, target, vk)
+            if isinstance(result, tuple): ok, msg = result
+            else: ok, msg = True, result
+            if ok:
+                from keyboards import family_proposal_keyboard
+                _send(vk, peer_id, msg, family_proposal_keyboard())
+            else: _send(vk, peer_id, msg)
+            return
+
+    if command.startswith('сдать в детдом '):
+        _send(vk, peer_id, relinquish(user_id, _target(command[len('сдать в детдом '):]), vk)); return
+    if command == 'уйти из семьи': _send(vk, peer_id, leave_family(user_id)); return
+
     # ─── RP ─────────────────────────────────────────────
     rp_names = ['обнять', 'поцеловать', 'пожать руку', 'погладить', 'ущипнуть', 'укусить', 'дать пять', 'пнуть', 'положить в дурку', 'посадить на бутылку', 'застрелить', 'курить', 'уснуть', 'разбудить', 'накормить', 'подарить', 'пиво', 'подрочить', 'секс', 'футджоб', 'принять душ', 'минет', 'куни', '69']
     rp_command = next((x for x in sorted(rp_names, key=len, reverse=True) if command == x or command.startswith(x + ' ')), None)
+    
     if rp_command:
+        # --- ПРОВЕРКА ДЛЯ 18+ КОМАНД ---
+        adult_commands = ['подрочить', 'секс', 'футджоб', 'принять душ', 'минет', 'куни', '69']
+        if rp_command in adult_commands:
+            from config import ANARCHY_CHAT, CASINO_CHAT, CITADEL_CHAT, MAIN_CHATS
+            
+            # Проверка для Казино и прочих админских бесед (полный запрет)
+            if peer_id == CASINO_CHAT or (peer_id not in MAIN_CHATS and peer_id not in [ANARCHY_CHAT, CITADEL_CHAT] and peer_id > 2000000000):
+                _send(vk, peer_id, '❌ 18+ команды запрещены в этой беседе.', exclude_actor=True)
+                return
+                
+            # Проверка для Основных бесед (только с 23:00 до 08:00)
+            if peer_id in MAIN_CHATS:
+                current_hour = datetime.now().hour
+                if not (current_hour >= 23 or current_hour < 8):
+                    _send(vk, peer_id, '❌ 18+ команды в основных беседах доступны только с 23:00 до 08:00.', exclude_actor=True)
+                    return
+            
+            # Анархия и Цитадель пропускаются (работает 24/7)
+
         result = handle_rp_command(rp_command, user_id, peer_id, vk, text, get_user)
         if result:
             rp_text, rp_photo = result
