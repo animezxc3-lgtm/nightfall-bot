@@ -133,6 +133,14 @@ def handle_command(command, user_id, peer_id, vk, text):
         _send(vk, peer_id, '📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже.', menu_keyboard(is_adm, user_id == CREATOR_ID), exclude_actor=True)
         return
 
+        # ─── ПОМОЩЬ / КОМАНДЫ ────────────────────────────────
+    if command in ('помощь', 'команды', 'help'):
+        from keyboards import menu_keyboard
+        is_adm = get_admin_level(user_id, peer_id) >= 1
+        # Выводим то же меню с кнопками, что и по команде "лл меню"
+        _send(vk, peer_id, '📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже.', menu_keyboard(is_adm, user_id == CREATOR_ID), exclude_actor=True)
+        return
+
     # VIP-магазин В БЕСЕДЕ ЗАПРЕЩЕН
     if command == 'вип магазин' or command.startswith('купить ') or command.startswith('вип '):
         _send(vk, peer_id, 'VIP-магазин доступен только в личных сообщениях бота!', exclude_actor=True)
