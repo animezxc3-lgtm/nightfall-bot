@@ -101,6 +101,7 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
     # --- ЗАЯВКИ (ВЫБОР БЕСЕДЫ И РОЛИ) ---
     if cmd == 'app_chat_select':
         target_peer = payload.get('peer_id')
+        # Сохраняем ТОЛЬКО ID беседы (роль будет добавлена на следующем шаге)
         upsert_application(user_id, 'await_role', -1, [str(target_peer)]) 
         from keyboards import application_role_select_keyboard
         edit('📋 Шаг 2: Выбери роль, на которую ты претендуешь:', application_role_select_keyboard(target_peer))
@@ -114,6 +115,8 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
             edit('❌ На эту роль нельзя подать заявку.')
             return
             
+        # ВАЖНО: сохраняем беседу и роль в answers. 
+        # В applications.py они будут читаться как answers[0] и answers[1]
         upsert_application(user_id, 'in_progress', 0, [str(target_peer), str(role)])
         edit('Отлично! Теперь ответь на вопросы текстом.\n\n1️⃣ ' + QUESTIONS[0])
         return
@@ -177,6 +180,8 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
 
     # МЕНЮ
     if cmd == 'menu_main': edit('📖 Меню Lelouch Bot\n\nВыбери нужный раздел ниже.', menu_kb()); return
+    
+    # ОБНОВЛЕННОЕ МЕНЮ ОСНОВНЫХ КОМАНД
     if cmd == 'menu_basic': 
         edit('📋 ОСНОВНЫЕ КОМАНДЫ\n\n'
              '👤 Статистика\n'
@@ -195,7 +200,6 @@ def handle_button(cmd, user_id, peer_id, conversation_message_id, vk, payload=No
              '▪ лл продать дом | машину | телефон', menu_kb())
         return
 
-    # --- ОБНОВЛЕННОЕ МЕНЮ ОТНОШЕНИЙ ---
     if cmd == 'menu_relationships': 
         edit('💛 Команды отношений\n'
              '▪ лл <семья> + "ID"\n'

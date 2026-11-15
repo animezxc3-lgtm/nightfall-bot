@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from config import (
     APPLICATIONS_PEER_ID, APPLICATION_COOLDOWN_DAYS,
     APPLICATION_TIMEOUT_MINUTES, APPLICATION_MIN_DELAY_SECONDS,
-    CONTROL_CHAT, MAIN_CHATS
+    CONTROL_CHAT, MAIN_CHATS, EXTRA_CHATS
 )
 from database import (
     get_application, upsert_application, delete_application,
@@ -15,7 +15,7 @@ from database import (
     is_in_admin_blacklist, get_global_role,
     db_cursor, set_gif_link, set_status,
 )
-from keyboards import application_review_keyboard, application_chat_select_keyboard, application_role_select_keyboard
+from keyboards import application_review_keyboard, application_chat_select_keyboard
 
 QUESTIONS = [
     'Ваше имя и фамилия? (только буквы, 2–80 символов)',
@@ -75,6 +75,15 @@ def _vk_name(vk, uid):
     except Exception:
         return 'Пользователь'
 
+def _get_chat_name(chat_id):
+    chat_names = {MAIN_CHATS[0]: "NightFall 1", MAIN_CHATS[1]: "NightFall 2", MAIN_CHATS[2]: "NightFall 3",
+                  MAIN_CHATS[3]: "NightFall 4", MAIN_CHATS[4]: "NightFall 5", MAIN_CHATS[5]: "NightFall 6",
+                  EXTRA_CHATS[0]: "NF || Anarchy", EXTRA_CHATS[1]: "NF || Casino"}
+    return chat_names.get(chat_id, "Неизвестная беседа")
+
+def _get_role_name(role_id):
+    return {2: "Активист", 3: "Рекрутер", 4: "Администратор"}.get(role_id, "Неизвестная роль")
+
 def start_application(user_id, vk):
     app = get_application(user_id)
 
@@ -113,19 +122,16 @@ def start_application(user_id, vk):
         'Чтобы прервать напиши — лл отмена.\n\n'
     )
     vk.messages.send(peer_id=user_id, random_id=0, message=msg, keyboard=json.dumps(application_chat_select_keyboard(), ensure_ascii=False), disable_mentions=True)
-    return None # Отправлено вручную
+    return None
 
 def handle_dm_message(user_id, text, vk):
     app = get_application(user_id)
 
-    # ─── Ожидание GIF-ссылки (VIP) ────────────────────────────
     if app and app['state'] == 'await_gif':
         text_clean = (text or '').strip()
         if _DOC_RE.match(text_clean):
             set_gif_link(user_id, text_clean)
             delete_application(user_id)
-            
-            # Отправляем в заявки
             try:
                 vk.messages.send(
                     peer_id=APPLICATIONS_PEER_ID, random_id=0,
@@ -134,13 +140,11 @@ def handle_dm_message(user_id, text, vk):
                 )
             except Exception as e:
                 print(f"Ошибка отправки гиф в заявки: {e}")
-
             vk.messages.send(peer_id=user_id, random_id=0, message='✅ GIF/видео отправлено в заявки. Администраторы установят его в профиль.', disable_mentions=True)
         else:
             vk.messages.send(peer_id=user_id, random_id=0, message='❌ Это не похоже на ссылку на документ VK.\nПример: https://vk.com/doc-240896963_123456789\n\nПришли ссылку ещё раз или напиши `лл отмена`.', disable_mentions=True)
         return True
 
-    # ─── Ожидание статуса (VIP) ───────────────────────────────
     if app and app['state'] == 'await_status':
         text_clean = (text or '').strip()[:30]
         if text_clean:
@@ -151,7 +155,6 @@ def handle_dm_message(user_id, text, vk):
             vk.messages.send(peer_id=user_id, random_id=0, message='❌ Статус не может быть пустым. Пришли текст ещё раз.', disable_mentions=True)
         return True
 
-    # ─── Обычная заявка ─────────────────────────────────
     if not app or app['state'] not in ('in_progress', 'await_chat', 'await_role'):
         return False
 
@@ -164,11 +167,11 @@ def handle_dm_message(user_id, text, vk):
     if not text:
         return True
 
-    # Если сейчас ждем выбора кнопками — текстовые сообщения игнорируем
     if app['state'] in ('await_chat', 'await_role'):
         vk.messages.send(peer_id=user_id, random_id=0, message='Пожалуйста, воспользуйся кнопками выше, чтобы выбрать беседу или роль.', disable_mentions=True)
         return True
 
+    # Сдвигаем индекс ответа на 2, так как первые два места заняты ID беседы и роли
     step = app['current_step']
     answers = list(app['answers'])
 
@@ -201,26 +204,29 @@ def cancel_application(user_id, vk):
     vk.messages.send(peer_id=user_id, random_id=0, message='Отменено. Ты можешь подать новую команду `лл заявка` или купить что-то в VIP-магазине.', disable_mentions=True)
 
 def send_to_review(user_id, answers, vk):
-    app = get_application(user_id)
-    chat_name = "Неизвестно"
-    role_name = "Неизвестно"
-    
-    from config import MAIN_CHATS, ANARCHY_CHAT, CASINO_CHAT
-    if app['current_step'] >= 0:
-        # Мы сохраняли выбранные ID в начало answers (или можно вытащить из БД, если настроим)
-        pass
-        
     applicant_name = _vk_name(vk, user_id)
+    
+    chat_id = int(answers[0]) if answers and str(answers[0]).isdigit() else 0
+    role_id = int(answers[1]) if len(answers) > 1 and str(answers[1]).isdigit() else 0
+    chat_name = _get_chat_name(chat_id)
+    role_name = _get_role_name(role_id)
+
     lines = [
         '📩 Новая заявка на администратора',
         f'👤 [id{user_id}|{applicant_name}]',
+        f'🏠 Беседа: {chat_name}',
+        f'⚙️ Роль: {role_name}',
         f'📅 {datetime.now().strftime("%Y-%m-%d %H:%M")}',
         '━━━━━━━━━━━━━━━',
     ]
-    for i, (q, a) in enumerate(zip(QUESTIONS, answers), 1):
+    
+    # Выводим ответы (пропускаем первые 2)
+    questions_answers = answers[2:]
+    for i, (q, a) in enumerate(zip(QUESTIONS, questions_answers), 1):
         lines.append(f'{_num(i)} {q}')
         lines.append(f'▸ {a}')
         lines.append('')
+        
     lines.append('━━━━━━━━━━━━━━━')
     lines.append('Принять или отклонить заявку:')
 
@@ -257,11 +263,17 @@ def review_application(applicant_id, reviewer_id, decision, vk, cmid):
     applicant_name = _vk_name(vk, applicant_id)
     reviewer_name = _vk_name(vk, reviewer_id)
 
+    # Расшифровываем беседу и роль
+    chat_id = int(app['answers'][0]) if app['answers'] and str(app['answers'][0]).isdigit() else 0
+    role_id = int(app['answers'][1]) if len(app['answers']) > 1 and str(app['answers'][1]).isdigit() else 0
+    chat_name = _get_chat_name(chat_id)
+    role_name = _get_role_name(role_id)
+
     if decision == 'accept':
-        final = f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\nПринята администратором [id{reviewer_id}|{reviewer_name}].'
+        final = f'📩 Заявка от [id{applicant_id}|{applicant_name}]\nБеседа: {chat_name} | Роль: {role_name}\n\n✅ Принята администратором [id{reviewer_id}|{reviewer_name}].'
         upsert_application(applicant_id, 'accepted', app['current_step'], app['answers'], app['review_peer_id'], app['review_msg_id'])
     else:
-        final = f'📩 Заявка от [id{applicant_id}|{applicant_name}]\n\nОтклонена администратором [id{reviewer_id}|{reviewer_name}].'
+        final = f'📩 Заявка от [id{applicant_id}|{applicant_name}]\nБеседа: {chat_name} | Роль: {role_name}\n\n❌ Отклонена администратором [id{reviewer_id}|{reviewer_name}].'
         upsert_application(applicant_id, 'declined', app['current_step'], app['answers'], app['review_peer_id'], app['review_msg_id'])
         set_application_cooldown(applicant_id, APPLICATION_COOLDOWN_DAYS)
 
