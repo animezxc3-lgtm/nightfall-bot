@@ -1,0 +1,11 @@
+{
+  "include": ["."],
+  "extraPaths": ["."],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false,
+  "reportAttributeAccessIssue": "warning",
+  "venvPath": ".",
+  "venv": ".venv"
+}

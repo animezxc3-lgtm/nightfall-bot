@@ -1,6 +1,36 @@
-__pycache__/
-*.pyc
+# Secrets
 .env
-data/*.db
-backups/
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 .venv/
+venv/
+env/
+
+# Data & runtime
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+logs/
+backups/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
+
+# Cache
+.cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
