@@ -343,6 +343,11 @@ def cmd_unadmin(ctx: CommandContext):
     ok, msg = AdminService().remove_rights(target)
     send_message(ctx.vk, ctx.peer_id, f"Снято с {_link(ctx.vk, target)}: {msg}")
     log_to_control(ctx.vk, f"📉 Снятие прав\nАдмин: {_link(ctx.vk, ctx.user_id)}\nПользователь: {_link(ctx.vk, target)}\nРезультат: {msg}")
+    try:
+        from bot.services.pin_service import refresh_after_admin_change
+        refresh_after_admin_change(ctx.vk, global_change=True)
+    except Exception as e:
+        logger.warning("pin refresh: %s", e)
 
 
 @router.command("выдать права", admin_level=6)
@@ -374,6 +379,11 @@ def cmd_give_rights(ctx: CommandContext):
         db.set_global_role(target, level)
         send_message(ctx.vk, ctx.peer_id, f"Назначена глобальная роль «{ROLE_NAMES[level]}» для {_link(ctx.vk, target)}.")
         log_to_control(ctx.vk, f"👑 Выдача глобальной роли\nАдмин: {_link(ctx.vk, ctx.user_id)}\nПользователь: {_link(ctx.vk, target)}\nРоль: {ROLE_NAMES[level]}")
+        try:
+            from bot.services.pin_service import refresh_after_admin_change
+            refresh_after_admin_change(ctx.vk, global_change=True)
+        except Exception as e:
+            logger.warning("pin refresh: %s", e)
         return
     if level >= actor_level and ctx.user_id != settings.creator_id:
         return send_message(ctx.vk, ctx.peer_id, "Нельзя выдавать роль равную или выше собственной.")
@@ -410,6 +420,11 @@ def cmd_give_rights(ctx: CommandContext):
         ctx.vk,
         f"📈 Выдача локальной роли\nАдмин: {_link(ctx.vk, ctx.user_id)}\nПользователь: {_link(ctx.vk, target)}\nРоль: {ROLE_NAMES[level]}\nБеседа: {_chat_title(ctx.vk, target_peer)}",
     )
+    try:
+        from bot.services.pin_service import refresh_after_admin_change
+        refresh_after_admin_change(ctx.vk, peer_id=target_peer, global_change=False)
+    except Exception as e:
+        logger.warning("pin refresh: %s", e)
 
 
 @router.command("чс адм", admin_level=6)
@@ -609,3 +624,17 @@ def cmd_recruit_settings(ctx: CommandContext):
         lines.append("")
     lines.append("Переключение: лл набор <номер_беседы> <роль>  (пока через БД / позже кнопки)")
     send_message(ctx.vk, ctx.peer_id, "\n".join(lines))
+
+
+@router.command("обновить закрепы", admin_level=6)
+def cmd_refresh_pins(ctx: CommandContext):
+    from bot.services.pin_service import update_all_pins, update_pin_in_chat
+    if ctx.args and ctx.args.strip().isdigit():
+        peer = int(ctx.args.strip())
+        ok, reason = update_pin_in_chat(ctx.vk, peer)
+        return send_message(ctx.vk, ctx.peer_id, f"Закреп {peer}: {reason}")
+    results = update_all_pins(ctx.vk)
+    lines = ["🔄 Обновление закрепов:"]
+    for peer, reason in results:
+        lines.append(f"• {peer}: {reason}")
+    send_message(ctx.vk, ctx.peer_id, "\n".join(lines) if len(lines) < 30 else ("\n".join(lines[:25]) + f"\n... ещё {len(lines)-25}"))

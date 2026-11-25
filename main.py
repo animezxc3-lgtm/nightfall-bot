@@ -67,6 +67,13 @@ def main():
 
     vk_session = vk_api.VkApi(token=settings.token)
     vk = vk_session.get_api()
+    try:
+        from bot.services.pin_service import update_all_pins
+        update_all_pins(vk)
+        logger.info("Закрепы синхронизированы.")
+    except Exception as e:
+        logger.warning("Ошибка синхронизации закрепов: %s", e)
+
     lp = VkBotLongPoll(vk_session, settings.group_id)
 
     for event in lp.listen():
@@ -117,20 +124,71 @@ def main():
             action = msg.get("action") if isinstance(msg, dict) else getattr(msg, "action", None)
             if action:
                 action_type = action.get("type") if isinstance(action, dict) else getattr(action, "type", None)
+                member_id = (
+                    action.get("member_id")
+                    if isinstance(action, dict)
+                    else getattr(action, "member_id", None)
+                )
+                peer = int(msg.get("peer_id") if isinstance(msg, dict) else msg.peer_id)
+                from_id = int(msg.get("from_id") if isinstance(msg, dict) else msg.from_id)
+
+                # --- Выход из беседы (самоисключение) ---
+                if (
+                    peer > 2_000_000_000
+                    and action_type == "chat_kick_user"
+                    and member_id
+                    and int(member_id) == from_id
+                ):
+                    left_id = int(member_id)
+                    # Админов и твинков не трогаем
+                    is_admin = False
+                    try:
+                        from bot.services.admin_service import AdminService
+                        is_admin = AdminService().is_admin(left_id, peer) or left_id == settings.creator_id
+                    except Exception:
+                        pass
+                    is_tw = False
+                    try:
+                        is_tw = bool(db_is_twink(left_id)) if False else __import__("bot.core.database", fromlist=["is_twink"]).is_twink(left_id)
+                    except Exception:
+                        pass
+                    if not is_admin and not is_tw:
+                        try:
+                            vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=left_id)
+                        except Exception:
+                            pass
+                        try:
+                            vk.messages.send(
+                                peer_id=peer,
+                                random_id=0,
+                                message="Империи нужны воистину верные люди.",
+                                disable_mentions=True,
+                            )
+                        except Exception:
+                            pass
+                    continue
+
                 if action_type in ("chat_invite_user", "chat_invite_user_by_link"):
-                    member_id = (
-                        action.get("member_id")
-                        if isinstance(action, dict)
-                        else getattr(action, "member_id", None)
-                    )
-                    peer = int(msg.get("peer_id") if isinstance(msg, dict) else msg.peer_id)
                     if member_id and int(member_id) > 0 and peer > 2_000_000_000:
                         uid = int(member_id)
                         if not user_exists(uid):
                             create_user(uid, get_user_name(vk, uid))
                         ensure_chat(peer)
-                        record_chat_join(peer, uid)
-                        send_welcome(vk, peer, uid)
+                        record_chat_join(peer, uid, invited_by=from_id if from_id > 0 else None)
+                        # Забаненных сразу кикаем
+                        if is_banned(uid):
+                            try:
+                                vk.messages.removeChatUser(chat_id=peer - 2000000000, user_id=uid)
+                                vk.messages.send(
+                                    peer_id=peer,
+                                    random_id=0,
+                                    message="Забаненный пользователь был исключён.",
+                                    disable_mentions=True,
+                                )
+                            except Exception:
+                                pass
+                        else:
+                            send_welcome(vk, peer, uid)
                     continue
 
             uid = int(msg["from_id"] if isinstance(msg, dict) else msg.from_id)
@@ -146,7 +204,31 @@ def main():
             if peer > 2_000_000_000:
                 ensure_chat(peer)
                 add_message_count(uid, peer)
-                
+
+            # Сбор фото для отчёта по норме (только ЛС)
+            try:
+                from bot.handlers.norm_commands import try_collect_norm_photo
+                if try_collect_norm_photo(uid, peer, msg, vk):
+                    continue
+            except Exception:
+                logger.exception("norm photo collect")
+
+            try:
+                from bot.handlers.internship_commands import try_collect_isp_photo
+                if try_collect_isp_photo(uid, peer, msg, vk):
+                    continue
+            except Exception:
+                logger.exception("isp photo collect")
+
+            # Ответы на заявку (ЛС, без префикса)
+            if text and peer < 2_000_000_000:
+                try:
+                    from bot.handlers.application_commands import process_application_text
+                    if process_application_text(vk, uid, peer, text):
+                        continue
+                except Exception:
+                    logger.exception("application text")
+
             if text:
                 router.dispatch_text(text, uid, peer, vk, event)
 

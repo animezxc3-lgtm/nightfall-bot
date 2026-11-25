@@ -9,3 +9,4 @@ from . import games_commands
 from . import application_commands
 from . import button_commands
 from . import vip_commands
+from . import internship_commands

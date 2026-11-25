@@ -39,6 +39,10 @@ def get_db() -> sqlite3.Connection:
     return _connect()
 
 def migrate_database():
+    ensure_admin_appointed_column()
+    _migrate_body()
+
+def _migrate_body():
     with db_cursor(commit=True) as (_, cur):
         script = """
         CREATE TABLE IF NOT EXISTS users (
@@ -57,7 +61,7 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS relationships (user_id INTEGER PRIMARY KEY, partner_id INTEGER, married INTEGER DEFAULT 0, family_surname TEXT DEFAULT '', relationship_since TEXT);
         CREATE TABLE IF NOT EXISTS warning_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, peer_id INTEGER, is_admin_warning INTEGER DEFAULT 0, created_at TEXT);
         CREATE TABLE IF NOT EXISTS kick_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, peer_id INTEGER, kicked_by INTEGER, created_at TEXT);
-        CREATE TABLE IF NOT EXISTS admin_chat_rights (peer_id INTEGER, user_id INTEGER, level INTEGER, PRIMARY KEY (peer_id, user_id));
+        CREATE TABLE IF NOT EXISTS admin_chat_rights (peer_id INTEGER, user_id INTEGER, level INTEGER, appointed_at TEXT, PRIMARY KEY (peer_id, user_id));
         CREATE TABLE IF NOT EXISTS global_roles (user_id INTEGER PRIMARY KEY, level INTEGER);
         CREATE TABLE IF NOT EXISTS chat_members (peer_id INTEGER, user_id INTEGER, first_join_at TEXT, invited_by INTEGER, PRIMARY KEY(peer_id, user_id));
         CREATE TABLE IF NOT EXISTS twinks (twink_id INTEGER PRIMARY KEY, owner_id INTEGER, added_at TEXT);
@@ -77,6 +81,7 @@ def migrate_database():
         CREATE TABLE IF NOT EXISTS one_time_coin_grants (user_id INTEGER PRIMARY KEY, amount INTEGER, granted_at TEXT);
         CREATE TABLE IF NOT EXISTS coin_grant_scanned_chats (peer_id INTEGER PRIMARY KEY, scanned_at TEXT);
 
+                CREATE TABLE IF NOT EXISTS internship_reports (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, peer_id INTEGER, report_text TEXT, status TEXT DEFAULT 'pending', created_at TEXT, reviewed_by INTEGER, reviewed_at TEXT);
         CREATE TABLE IF NOT EXISTS admin_blacklist (user_id INTEGER PRIMARY KEY, added_by INTEGER, added_at TEXT);
         CREATE TABLE IF NOT EXISTS admin_weekly_stats (user_id INTEGER NOT NULL, week_key TEXT NOT NULL, messages INTEGER DEFAULT 0, invites INTEGER DEFAULT 0, reports INTEGER DEFAULT 0, gems_awarded INTEGER DEFAULT 0, PRIMARY KEY(user_id, week_key));
         CREATE TABLE IF NOT EXISTS power_message_rewards (user_id INTEGER PRIMARY KEY, claimed_thresholds INTEGER DEFAULT 0);
@@ -140,8 +145,19 @@ def get_admin_level_for_chat(peer_id: int, user_id: int) -> int:
 
 def set_admin_level(peer_id: int, user_id: int, level: int):
     with db_cursor(commit=True) as (_, cur):
-        if level <= 0: cur.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
-        else: cur.execute("INSERT INTO admin_chat_rights (peer_id, user_id, level) VALUES (?, ?, ?) ON CONFLICT(peer_id, user_id) DO UPDATE SET level=excluded.level", (peer_id, user_id, level))
+        if level <= 0:
+            cur.execute("DELETE FROM admin_chat_rights WHERE peer_id=? AND user_id=?", (peer_id, user_id))
+        else:
+            now = datetime.now().isoformat()
+            # appointed_at обновляем только если роли не было или level изменился
+            cur.execute(
+                "INSERT INTO admin_chat_rights (peer_id, user_id, level, appointed_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(peer_id, user_id) DO UPDATE SET "
+                "appointed_at=CASE WHEN admin_chat_rights.level!=excluded.level OR admin_chat_rights.appointed_at IS NULL "
+                "THEN excluded.appointed_at ELSE admin_chat_rights.appointed_at END, "
+                "level=excluded.level",
+                (peer_id, user_id, level, now),
+            )
 
 def get_global_role(user_id: int) -> int:
     with db_cursor() as (_, cur):
@@ -241,7 +257,7 @@ def create_norm_report(user_id: int, text: str) -> int:
 
 def get_norm_report(report_id: int) -> Optional[sqlite3.Row]:
     with db_cursor() as (_, cur):
-        cur.execute("SELECT user_id, report_text, status FROM norm_reports WHERE id=?", (report_id,))
+        cur.execute("SELECT id, user_id, report_text, status, reviewed_by, reviewed_at, created_at FROM norm_reports WHERE id=?", (report_id,))
         return cur.fetchone()
 
 def update_norm_status(report_id: int, status: str, reviewer_id: int):
@@ -528,3 +544,77 @@ def get_recruit_settings(peer_id: int) -> dict:
         cur.execute("SELECT role_level, is_open FROM recruit_settings WHERE peer_id=?", (peer_id,))
         rows = cur.fetchall()
         return {int(r["role_level"]): bool(r["is_open"]) for r in rows}
+
+
+def add_norm_photo(report_id: int, attachment: str) -> None:
+    with db_cursor(commit=True) as (_, cur):
+        cur.execute("INSERT INTO norm_photos (report_id, attachment) VALUES (?, ?)", (report_id, attachment))
+
+def get_norm_photos(report_id: int) -> list[str]:
+    with db_cursor() as (_, cur):
+        cur.execute("SELECT attachment FROM norm_photos WHERE report_id=?", (report_id,))
+        return [str(r["attachment"]) for r in cur.fetchall() if r["attachment"]]
+
+def get_admin_tags_stats(user_id: int, week_start: str) -> dict:
+    with db_cursor() as (_, cur):
+        cur.execute(
+            "SELECT tag_type, SUM(count) as c FROM admin_tags_stats "
+            "WHERE user_id=? AND date>=? GROUP BY tag_type",
+            (user_id, week_start),
+        )
+        rows = cur.fetchall()
+        return {str(r["tag_type"]): int(r["c"] or 0) for r in rows}
+
+def get_user_admin_chats(user_id: int) -> list[tuple[int, int]]:
+    """Список (peer_id, level) где у пользователя есть локальные права."""
+    with db_cursor() as (_, cur):
+        cur.execute(
+            "SELECT peer_id, level FROM admin_chat_rights WHERE user_id=? AND level>0",
+            (user_id,),
+        )
+        return [(int(r["peer_id"]), int(r["level"])) for r in cur.fetchall()]
+
+
+def create_internship_report(user_id: int, peer_id: int, text: str) -> int:
+    with db_cursor(commit=True) as (_, cur):
+        cur.execute(
+            "INSERT INTO internship_reports (user_id, peer_id, report_text, created_at) VALUES (?,?,?,?)",
+            (user_id, peer_id, text, datetime.now().isoformat()),
+        )
+        return cur.lastrowid or 0
+
+def get_internship_report(report_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute(
+            "SELECT id, user_id, peer_id, report_text, status, reviewed_by, reviewed_at FROM internship_reports WHERE id=?",
+            (report_id,),
+        )
+        return cur.fetchone()
+
+def update_internship_status(report_id: int, status: str, reviewer_id: int):
+    with db_cursor(commit=True) as (_, cur):
+        cur.execute(
+            "UPDATE internship_reports SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?",
+            (status, reviewer_id, datetime.now().isoformat(), report_id),
+        )
+
+
+def get_admin_appointed_at(peer_id: int, user_id: int) -> Optional[str]:
+    with db_cursor() as (_, cur):
+        try:
+            cur.execute(
+                "SELECT appointed_at FROM admin_chat_rights WHERE peer_id=? AND user_id=?",
+                (peer_id, user_id),
+            )
+            r = cur.fetchone()
+            return r["appointed_at"] if r and r["appointed_at"] else None
+        except Exception:
+            return None
+
+def ensure_admin_appointed_column():
+    """Мягкая миграция appointed_at для старых БД."""
+    with db_cursor(commit=True) as (_, cur):
+        try:
+            cur.execute("ALTER TABLE admin_chat_rights ADD COLUMN appointed_at TEXT")
+        except Exception:
+            pass
